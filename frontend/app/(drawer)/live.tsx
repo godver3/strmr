@@ -821,22 +821,18 @@ function LiveScreen() {
                   <View style={styles.actionsRow}>
                     <FocusablePressable
                       text="Categories"
+                      icon="albums-outline"
                       onSelect={handleOpenCategoryModal}
                       disabled={availableCategories.length === 0}
                       focusKey="live-categories"
-                      style={Platform.isTV ? styles.navButtonTV : undefined}
-                      focusedStyle={Platform.isTV ? styles.navButtonTVFocused : undefined}
-                      textStyle={Platform.isTV ? styles.navButtonTextTV : undefined}
-                      focusedTextStyle={Platform.isTV ? styles.navButtonTextTVFocused : undefined}
+                      style={styles.headerActionButton}
                     />
                     <FocusablePressable
                       text={isFilterActive ? 'Close Filter' : 'Filter'}
+                      icon={isFilterActive ? 'close-outline' : 'filter-outline'}
                       onSelect={handleToggleFilter}
-                      style={Platform.isTV ? styles.navButtonTV : styles.settingsButton}
-                      focusedStyle={Platform.isTV ? styles.navButtonTVFocused : undefined}
-                      textStyle={Platform.isTV ? styles.navButtonTextTV : undefined}
-                      focusedTextStyle={Platform.isTV ? styles.navButtonTextTVFocused : undefined}
                       focusKey="live-filter"
+                      style={styles.headerActionButton}
                     />
                   </View>
                 </SpatialNavigationNode>
@@ -1179,7 +1175,13 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     actionsRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: theme.spacing.md * scaleFactor,
+      gap: theme.spacing.sm,
+    },
+    headerActionButton: {
+      paddingHorizontal: theme.spacing['2xl'],
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
     },
     title: {
       ...theme.typography.title.xl,
@@ -1210,38 +1212,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     refreshChipTextDisabled: {
       color: theme.colors.text.muted,
-    },
-    settingsButton: {
-      paddingHorizontal: theme.spacing.xl * scaleFactor,
-    },
-    // tvOS: replicate Watchlist filter button styling for top-right actions
-    navButtonTV: {
-      minWidth: 280,
-      minHeight: 64,
-      justifyContent: 'center',
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing['2xl'],
-      borderWidth: 3,
-      borderRadius: theme.radius.md,
-      backgroundColor: theme.colors.background.surface,
-      borderColor: theme.colors.border.subtle,
-      alignSelf: 'flex-start',
-    },
-    navButtonTVFocused: {
-      // Match Watchlist focused (non-active) look
-      borderColor: theme.colors.accent.primary,
-      backgroundColor: theme.colors.background.elevated,
-    },
-    navButtonTextTV: {
-      ...theme.typography.title.md,
-      color: theme.colors.text.primary,
-      textAlign: 'center',
-    },
-    navButtonTextTVFocused: {
-      // Keep text readable on focused elevated background
-      ...theme.typography.title.md,
-      color: theme.colors.text.primary,
-      textAlign: 'center',
     },
     emptyState: {
       flex: 1,

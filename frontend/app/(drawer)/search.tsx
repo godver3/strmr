@@ -535,6 +535,7 @@ export default function SearchScreen() {
                   inputRef.current?.blur();
                 }}>
               {({ isFocused: textInputFocused }: { isFocused: boolean }) => (
+                  <Pressable tvParallaxProperties={{ enabled: false }}>
                   <View
                     style={[styles.searchInputWrapper, textInputFocused && styles.searchInputWrapperFocused]}
                     pointerEvents={isMenuOpen ? 'none' : 'auto'}>
@@ -587,6 +588,7 @@ export default function SearchScreen() {
                       ) : null}
                     </View>
                   </View>
+                  </Pressable>
                 )}
               </SpatialNavigationFocusableView>
             </DefaultFocus>

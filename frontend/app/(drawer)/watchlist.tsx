@@ -1,11 +1,11 @@
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
+import FocusablePressable from '@/components/FocusablePressable';
 import MediaGrid from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
 import { useWatchlist } from '@/components/WatchlistContext';
 import type { Title } from '@/services/api';
 import {
   DefaultFocus,
-  SpatialNavigationFocusableView,
   SpatialNavigationNode,
   SpatialNavigationRoot,
   useSpatialNavigator,
@@ -13,12 +13,13 @@ import {
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import type { NovaTheme } from '@/theme';
 import { useTheme } from '@/theme';
+import { Ionicons } from '@expo/vector-icons';
 import { Direction } from '@bam.tech/lrud';
 import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 type WatchlistTitle = Title & { uniqueKey?: string };
 
@@ -44,10 +45,10 @@ export default function WatchlistScreen() {
     return watchlistTitles.filter((title) => title.mediaType === filter);
   }, [filter, watchlistTitles]);
 
-  const filterOptions: Array<{ key: 'all' | 'movie' | 'series'; label: string }> = [
-    { key: 'all', label: 'All' },
-    { key: 'movie', label: 'Movies' },
-    { key: 'series', label: 'TV Shows' },
+  const filterOptions: Array<{ key: 'all' | 'movie' | 'series'; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
+    { key: 'all', label: 'All', icon: 'grid-outline' },
+    { key: 'movie', label: 'Movies', icon: 'film-outline' },
+    { key: 'series', label: 'TV Shows', icon: 'tv-outline' },
   ];
 
   const onDirectionHandledWithoutMovement = useCallback(
@@ -105,73 +106,39 @@ export default function WatchlistScreen() {
             <View style={styles.controlsRow}>
               {/* Make filters a vertical list on TV for Up/Down navigation */}
               <SpatialNavigationNode orientation="horizontal">
-                <View style={[styles.filtersRow]}>
-                  <DefaultFocus>
-                    <SpatialNavigationFocusableView
-                      focusKey={`watchlist-filter-${filterOptions[0].key}`}
-                      onFocus={() => setFocusedFilterIndex(0)}
-                      onSelect={() => setFilter(filterOptions[0].key)}>
-                      {({ isFocused }: { isFocused: boolean }) => {
-                        const isActive = filter === filterOptions[0].key;
-                        const isActiveFocused = isActive && isFocused;
-                        return (
-                          <View
-                            style={[
-                              styles.filterButton,
-                              Platform.isTV ? styles.filterButtonTV : styles.filterButtonMobile,
-                              styles.filterButtonSpacing,
-                              Platform.isTV && styles.filterButtonSpacingTV,
-                              isFocused && styles.filterButtonFocused,
-                              isActive && (isFocused ? styles.filterButtonActiveFocused : styles.filterButtonActive),
-                            ]}>
-                            <Text
-                              style={[
-                                Platform.isTV ? styles.filterButtonTextTV : styles.filterButtonText,
-                                isFocused && !isActive && styles.filterButtonTextFocused,
-                                isActive && !isFocused && styles.filterButtonTextActive,
-                                isActiveFocused && styles.filterButtonTextActiveFocused,
-                              ]}>
-                              {filterOptions[0].label}
-                            </Text>
-                          </View>
-                        );
-                      }}
-                    </SpatialNavigationFocusableView>
-                  </DefaultFocus>
-
-                  {filterOptions.slice(1).map((option, index, list) => (
-                    <SpatialNavigationFocusableView
-                      key={option.key}
-                      focusKey={`watchlist-filter-${option.key}`}
-                      onFocus={() => setFocusedFilterIndex(index + 1)}
-                      onSelect={() => setFilter(option.key)}>
-                      {({ isFocused }: { isFocused: boolean }) => {
-                        const isActive = filter === option.key;
-                        const isActiveFocused = isActive && isFocused;
-                        return (
-                          <View
-                            style={[
-                              styles.filterButton,
-                              Platform.isTV ? styles.filterButtonTV : styles.filterButtonMobile,
-                              index !== list.length - 1 && styles.filterButtonSpacing,
-                              Platform.isTV && index !== list.length - 1 && styles.filterButtonSpacingTV,
-                              isFocused && styles.filterButtonFocused,
-                              isActive && (isFocused ? styles.filterButtonActiveFocused : styles.filterButtonActive),
-                            ]}>
-                            <Text
-                              style={[
-                                Platform.isTV ? styles.filterButtonTextTV : styles.filterButtonText,
-                                isFocused && !isActive && styles.filterButtonTextFocused,
-                                isActive && !isFocused && styles.filterButtonTextActive,
-                                isActiveFocused && styles.filterButtonTextActiveFocused,
-                              ]}>
-                              {option.label}
-                            </Text>
-                          </View>
-                        );
-                      }}
-                    </SpatialNavigationFocusableView>
-                  ))}
+                <View style={styles.filtersRow}>
+                  {filterOptions.map((option, index) => {
+                    const isActive = filter === option.key;
+                    const isFirst = index === 0;
+                    return isFirst ? (
+                      <DefaultFocus key={option.key}>
+                        <FocusablePressable
+                          focusKey={`watchlist-filter-${option.key}`}
+                          text={option.label}
+                          icon={option.icon}
+                          onFocus={() => setFocusedFilterIndex(index)}
+                          onSelect={() => setFilter(option.key)}
+                          style={[
+                            styles.filterButton,
+                            isActive && styles.filterButtonActive,
+                          ]}
+                        />
+                      </DefaultFocus>
+                    ) : (
+                      <FocusablePressable
+                        key={option.key}
+                        focusKey={`watchlist-filter-${option.key}`}
+                        text={option.label}
+                        icon={option.icon}
+                        onFocus={() => setFocusedFilterIndex(index)}
+                        onSelect={() => setFilter(option.key)}
+                        style={[
+                          styles.filterButton,
+                          isActive && styles.filterButtonActive,
+                        ]}
+                      />
+                    );
+                  })}
                 </View>
               </SpatialNavigationNode>
             </View>
@@ -225,68 +192,17 @@ const createStyles = (theme: NovaTheme) =>
     },
     filtersRow: {
       flexDirection: 'row',
+      gap: theme.spacing.sm,
       marginBottom: theme.spacing.sm,
     },
-    filtersRowTV: {
-      flexDirection: 'column',
-    },
     filterButton: {
-      backgroundColor: theme.colors.overlay.button,
-      borderColor: 'transparent',
-      alignItems: 'center',
-    },
-    filterButtonMobile: {
-      paddingVertical: theme.spacing.sm,
-      paddingHorizontal: theme.spacing.lg,
-      borderWidth: 3,
-      borderRadius: theme.radius.md,
-    },
-    filterButtonTV: {
-      paddingVertical: theme.spacing.md * 1.375,
-      paddingHorizontal: theme.spacing.lg * 1.375,
-      justifyContent: 'center',
-      borderWidth: 4,
-      borderRadius: theme.radius.md * 1.375,
-    },
-    filterButtonSpacing: {
-      marginRight: theme.spacing.md,
-    },
-    filterButtonSpacingTV: {
-      marginRight: theme.spacing.lg,
-      marginBottom: 0,
-    },
-    filterButtonFocused: {
-      backgroundColor: theme.colors.accent.primary,
-      borderColor: theme.colors.accent.primary,
+      paddingHorizontal: theme.spacing['2xl'],
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
     },
     filterButtonActive: {
-      backgroundColor: theme.colors.background.elevated,
       borderColor: theme.colors.accent.primary,
-    },
-    filterButtonActiveFocused: {
-      backgroundColor: theme.colors.accent.primary,
-      borderColor: theme.colors.text.primary,
-    },
-    filterButtonText: {
-      ...theme.typography.label.md,
-      color: theme.colors.text.primary,
-      textAlign: 'center',
-    },
-    filterButtonTextTV: {
-      ...theme.typography.label.md,
-      fontSize: theme.typography.label.md.fontSize * 1.375,
-      lineHeight: theme.typography.label.md.lineHeight * 1.375,
-      color: theme.colors.text.primary,
-      textAlign: 'center',
-    },
-    filterButtonTextFocused: {
-      color: theme.colors.text.inverse,
-    },
-    filterButtonTextActive: {
-      color: theme.colors.accent.primary,
-    },
-    filterButtonTextActiveFocused: {
-      color: theme.colors.text.inverse,
     },
     bottomGradient: {
       position: 'absolute',

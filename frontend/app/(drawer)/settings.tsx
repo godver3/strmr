@@ -36,6 +36,7 @@ import { useMenuContext } from '@/components/MenuContext';
 import { useToast } from '@/components/ToastContext';
 import { useLiveChannels } from '@/hooks/useLiveChannels';
 import useUnplayableReleases from '@/hooks/useUnplayableReleases';
+import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -275,6 +276,60 @@ type SettingsGridItem =
   | { type: 'button-row'; id: string; buttons: Array<{ label: string; action: string; disabled?: boolean }> }
   | { type: 'shelf-item'; id: string; shelf: BackendShelfConfig; index: number; total: number };
 
+// TEST: Direct TextInput matching search page style with tvParallaxProperties fix
+function TestTextInput({ theme }: { theme: NovaTheme }) {
+  const inputRef = useRef<TextInput>(null);
+  const [testValue, setTestValue] = useState('');
+
+  return (
+    <View style={{ marginBottom: theme.spacing.xl }}>
+      <SpatialNavigationFocusableView
+        focusKey="test-direct-input"
+        onSelect={() => inputRef.current?.focus()}
+        onBlur={() => inputRef.current?.blur()}>
+        {({ isFocused }: { isFocused: boolean }) => (
+          <Pressable tvParallaxProperties={{ enabled: false }}>
+            <TextInput
+              ref={inputRef}
+              {...(Platform.isTV ? { defaultValue: testValue } : { value: testValue })}
+              onChangeText={setTestValue}
+              style={[
+                {
+                  flex: 1,
+                  fontSize: 32,
+                  color: theme.colors.text.primary,
+                  paddingHorizontal: theme.spacing.lg,
+                  paddingVertical: theme.spacing.md,
+                  backgroundColor: theme.colors.background.surface,
+                  borderRadius: theme.radius.md,
+                  borderWidth: 2,
+                  borderColor: 'transparent',
+                  minHeight: 60,
+                },
+                isFocused && {
+                  borderColor: theme.colors.accent.primary,
+                  borderWidth: 3,
+                  shadowColor: theme.colors.accent.primary,
+                  shadowOpacity: 0.4,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowRadius: 12,
+                },
+              ]}
+              placeholder="Search for movies or TV shows"
+              placeholderTextColor={theme.colors.text.muted}
+              autoCorrect={false}
+              autoCapitalize="none"
+              autoComplete="off"
+              textContentType="none"
+              spellCheck={false}
+            />
+          </Pressable>
+        )}
+      </SpatialNavigationFocusableView>
+    </View>
+  );
+}
+
 // TextInputModal Props for TV text editing
 interface TextInputModalProps {
   visible: boolean;
@@ -287,7 +342,7 @@ interface TextInputModalProps {
   theme: NovaTheme;
 }
 
-// TextInputModal Component for TV - Uses RN Modal for proper overlay behavior
+// TextInputModal Component for TV - Uses View overlay (not Modal) to avoid tvOS native focus issues
 function TextInputModal({ visible, label, value, onSubmit, onCancel, options, styles, theme }: TextInputModalProps) {
   const inputRef = useRef<TextInput>(null);
   const [editValue, setEditValue] = useState(value);
@@ -312,21 +367,78 @@ function TextInputModal({ visible, label, value, onSubmit, onCancel, options, st
     onSubmit(editValue);
   }, [editValue, onSubmit]);
 
-  return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="fade"
-      onRequestClose={handleSubmit}>
-      <SpatialNavigationRoot isActive={visible}>
-        <View style={styles.tvModalOverlay as ViewStyle}>
-          <View style={[styles.tvModalContent as ViewStyle, { maxHeight: options?.multiline ? '60%' : '40%' }]}>
-            <Text style={styles.tvModalTitle as TextStyle}>{label}</Text>
-            <Text style={styles.tvModalSubtitle as TextStyle}>
-              {options?.multiline ? 'Enter text below' : 'Press select to edit, then use the keyboard'}
-            </Text>
+  // Refs for back interceptor to avoid stale closures
+  const handleSubmitRef = useRef(handleSubmit);
+  const removeInterceptorRef = useRef<(() => void) | null>(null);
 
-            <SpatialNavigationNode orientation="vertical">
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  // Register back interceptor to close modal when menu/back button is pressed on tvOS
+  useEffect(() => {
+    if (!visible) {
+      // Clean up interceptor when modal is hidden
+      if (removeInterceptorRef.current) {
+        removeInterceptorRef.current();
+        removeInterceptorRef.current = null;
+      }
+      return;
+    }
+
+    // Install interceptor when modal is shown
+    let isHandling = false;
+    let cleanupScheduled = false;
+
+    const removeInterceptor = RemoteControlManager.pushBackInterceptor(() => {
+      // Prevent duplicate handling
+      if (isHandling) {
+        return true;
+      }
+
+      isHandling = true;
+
+      // Call handleSubmit using ref to avoid stale closure
+      handleSubmitRef.current();
+
+      // Delay cleanup to swallow duplicate events
+      if (!cleanupScheduled) {
+        cleanupScheduled = true;
+        setTimeout(() => {
+          if (removeInterceptorRef.current) {
+            removeInterceptorRef.current();
+            removeInterceptorRef.current = null;
+          }
+          isHandling = false;
+        }, 750);
+      }
+
+      return true; // Handled - prevents further interceptors from running
+    });
+
+    removeInterceptorRef.current = removeInterceptor;
+
+    return () => {
+      // Cleanup on unmount
+    };
+  }, [visible]);
+
+  // Don't render anything if not visible - avoids native Modal focus issues on tvOS
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <SpatialNavigationRoot isActive={visible}>
+      <View style={styles.tvModalOverlay as ViewStyle}>
+        <View style={[styles.tvModalContent as ViewStyle, { maxHeight: options?.multiline ? '60%' : '40%' }]}>
+          <Text style={styles.tvModalTitle as TextStyle}>{label}</Text>
+          <Text style={styles.tvModalSubtitle as TextStyle}>
+            {options?.multiline ? 'Enter text below' : 'Press select to edit, then use the keyboard'}
+          </Text>
+
+          <SpatialNavigationNode orientation="vertical">
+            <DefaultFocus>
               <SpatialNavigationFocusableView
                 focusKey="text-input-modal-input"
                 onSelect={() => {
@@ -338,7 +450,7 @@ function TextInputModal({ visible, label, value, onSubmit, onCancel, options, st
                 {({ isFocused }: { isFocused: boolean }) => (
                   <TextInput
                     ref={inputRef}
-                    value={editValue}
+                    {...(Platform.isTV ? { defaultValue: editValue } : { value: editValue })}
                     onChangeText={setEditValue}
                     onFocus={handleFocus}
                     onBlur={handleBlur}
@@ -362,28 +474,30 @@ function TextInputModal({ visible, label, value, onSubmit, onCancel, options, st
                     underlineColorAndroid="transparent"
                     importantForAutofill="no"
                     disableFullscreenUI={true}
+                    {...(Platform.OS === 'ios' &&
+                      Platform.isTV && {
+                      keyboardAppearance: 'dark',
+                    })}
                   />
                 )}
               </SpatialNavigationFocusableView>
+            </DefaultFocus>
 
-              <View style={styles.tvModalFooter as ViewStyle}>
-                <DefaultFocus>
-                  <FocusablePressable
-                    focusKey="text-input-modal-close"
-                    text="Close"
-                    onSelect={handleSubmit}
-                    style={styles.tvModalCloseButton as ViewStyle}
-                    focusedStyle={styles.tvModalCloseButtonFocused as ViewStyle}
-                    textStyle={styles.tvModalCloseButtonText as TextStyle}
-                    focusedTextStyle={styles.tvModalCloseButtonTextFocused as TextStyle}
-                  />
-                </DefaultFocus>
-              </View>
-            </SpatialNavigationNode>
-          </View>
+            <View style={styles.tvModalFooter as ViewStyle}>
+              <FocusablePressable
+                focusKey="text-input-modal-close"
+                text="Close"
+                onSelect={handleSubmit}
+                style={styles.tvModalCloseButton as ViewStyle}
+                focusedStyle={styles.tvModalCloseButtonFocused as ViewStyle}
+                textStyle={styles.tvModalCloseButtonText as TextStyle}
+                focusedTextStyle={styles.tvModalCloseButtonTextFocused as TextStyle}
+              />
+            </View>
+          </SpatialNavigationNode>
         </View>
-      </SpatialNavigationRoot>
-    </Modal>
+      </View>
+    </SpatialNavigationRoot>
   );
 }
 
@@ -2284,6 +2398,9 @@ function SettingsScreen() {
         {/* TV Layout: Entire settings in virtualized grid from top */}
         {Platform.isTV && currentTabGridData.length > 0 && (
           <View style={styles.tvGridContainer}>
+            {/* TEST: Direct TextInput on page without modal */}
+            <TestTextInput theme={theme} />
+            {/* END TEST */}
             <SpatialNavigationVirtualizedGrid
               data={currentTabGridData}
               renderItem={renderGridItem}
