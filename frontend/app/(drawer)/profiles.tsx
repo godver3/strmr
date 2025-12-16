@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Keyboard, Modal, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
 import FocusablePressable from '@/components/FocusablePressable';
@@ -71,6 +71,7 @@ export default function ProfilesScreen() {
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
   const [newlyCreatedProfileId, setNewlyCreatedProfileId] = useState<string | null>(null);
   const newProfileInputRef = useRef<TextInput | null>(null);
+  const tempProfileNameRef = useRef('');
   const { lock, unlock } = useLockSpatialNavigation();
   const { grabFocus } = useSpatialNavigator();
 
@@ -199,7 +200,24 @@ export default function ProfilesScreen() {
   const handleBlur = useCallback(() => {
     // Unlock spatial navigation to re-enable d-pad navigation
     unlock();
-  }, [unlock]);
+    // On TV, sync the temp ref value to state on blur
+    if (Platform.isTV) {
+      const finalValue = tempProfileNameRef.current;
+      if (finalValue !== newProfileName) {
+        setNewProfileName(finalValue);
+      }
+    }
+  }, [unlock, newProfileName]);
+
+  const handleChangeText = useCallback((text: string) => {
+    if (Platform.isTV) {
+      // On tvOS, store in ref to avoid controlled input issues
+      tempProfileNameRef.current = text;
+    } else {
+      // On mobile, use normal controlled input
+      setNewProfileName(text);
+    }
+  }, []);
 
   const onDirectionHandledWithoutMovement = useCallback(
     (movement: Direction) => {
@@ -236,22 +254,37 @@ export default function ProfilesScreen() {
 
   // TV: Close create modal
   const handleCloseCreateModal = useCallback(() => {
+    // Clean up keyboard on TV before closing
+    if (Platform.isTV) {
+      newProfileInputRef.current?.blur();
+      Keyboard.dismiss();
+    }
     setIsCreateModalVisible(false);
     setNewProfileName('');
+    tempProfileNameRef.current = '';
   }, []);
 
   // TV: Create profile from modal
   const handleCreateFromModal = useCallback(async () => {
-    const trimmed = newProfileName.trim();
+    // On TV, use the temp ref value since we're using uncontrolled input
+    const nameValue = Platform.isTV ? tempProfileNameRef.current : newProfileName;
+    const trimmed = nameValue.trim();
     if (!trimmed) {
       showToast('Profile name cannot be empty.', { tone: 'danger' });
       return;
+    }
+
+    // Clean up keyboard on TV before closing
+    if (Platform.isTV) {
+      newProfileInputRef.current?.blur();
+      Keyboard.dismiss();
     }
 
     setPending('create');
     try {
       const created = await createUser(trimmed);
       setNewProfileName('');
+      tempProfileNameRef.current = '';
       setRenameValues((current) => ({ ...current, [created.id]: created.name }));
       showToast(`Created profile "${created.name}".`, { tone: 'success' });
       setIsCreateModalVisible(false);
@@ -327,12 +360,10 @@ export default function ProfilesScreen() {
                   <FocusablePressable
                     focusKey="profiles-refresh"
                     text={pending === 'refresh' ? 'Refreshing…' : 'Refresh'}
+                    icon="refresh-outline"
                     onSelect={handleRefreshProfiles}
                     disabled={pending === 'refresh'}
                     style={styles.headerButton}
-                    focusedStyle={styles.headerButtonFocused}
-                    textStyle={styles.headerButtonText}
-                    focusedTextStyle={styles.headerButtonTextFocused}
                   />
                 </SpatialNavigationNode>
               </View>
@@ -382,26 +413,42 @@ export default function ProfilesScreen() {
                     }}
                     onBlur={() => newProfileInputRef.current?.blur()}>
                     {({ isFocused }: { isFocused: boolean }) => (
-                      <TextInput
-                        ref={newProfileInputRef}
-                        value={newProfileName}
-                        onChangeText={setNewProfileName}
-                        onFocus={handleFocus}
-                        onBlur={handleBlur}
-                        placeholder="Profile name"
-                        placeholderTextColor={theme.colors.text.muted}
-                        style={[styles.modalInput, isFocused && styles.modalInputFocused]}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        returnKeyType="done"
-                        onSubmitEditing={() => {
-                          if (newProfileName.trim()) {
-                            void handleCreateFromModal();
-                          }
-                        }}
-                        showSoftInputOnFocus={true}
-                        editable={Platform.isTV ? isFocused : true}
-                      />
+                      <Pressable tvParallaxProperties={{ enabled: false }}>
+                        <TextInput
+                          ref={newProfileInputRef}
+                          {...(Platform.isTV ? { defaultValue: newProfileName } : { value: newProfileName })}
+                          onChangeText={handleChangeText}
+                          onFocus={handleFocus}
+                          onBlur={handleBlur}
+                          placeholder="Profile name"
+                          placeholderTextColor={theme.colors.text.muted}
+                          style={[styles.modalInput, isFocused && styles.modalInputFocused]}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="off"
+                          textContentType="none"
+                          spellCheck={false}
+                          clearButtonMode="never"
+                          enablesReturnKeyAutomatically={false}
+                          multiline={false}
+                          numberOfLines={1}
+                          underlineColorAndroid="transparent"
+                          importantForAutofill="no"
+                          disableFullscreenUI={true}
+                          returnKeyType="done"
+                          onSubmitEditing={() => {
+                            const nameValue = Platform.isTV ? tempProfileNameRef.current : newProfileName;
+                            if (nameValue.trim()) {
+                              void handleCreateFromModal();
+                            }
+                          }}
+                          showSoftInputOnFocus={true}
+                          editable={Platform.isTV ? isFocused : true}
+                          {...(Platform.OS === 'ios' && Platform.isTV && {
+                            keyboardAppearance: 'dark',
+                          })}
+                        />
+                      </Pressable>
                     )}
                   </SpatialNavigationFocusableView>
 
@@ -717,35 +764,19 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       marginBottom: theme.spacing.xl,
     },
     headerButton: {
-      minWidth: 200,
-      minHeight: 56,
-      justifyContent: 'center',
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing.xl,
-      borderWidth: 3,
-      borderRadius: theme.radius.md,
+      paddingHorizontal: theme.spacing['2xl'],
       backgroundColor: theme.colors.background.surface,
+      borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
-    },
-    headerButtonFocused: {
-      borderColor: theme.colors.accent.primary,
-      backgroundColor: theme.colors.background.elevated,
-    },
-    headerButtonText: {
-      ...theme.typography.title.md,
-      color: theme.colors.text.primary,
-      textAlign: 'center',
-    },
-    headerButtonTextFocused: {
-      color: theme.colors.text.primary,
     },
     title: {
       ...theme.typography.title.xl,
       color: theme.colors.text.primary,
     },
     description: {
-      ...theme.typography.body.lg,
+      ...theme.typography.title.md,
       color: theme.colors.text.secondary,
+      fontWeight: '400',
     },
     section: {
       gap: theme.spacing.md,
@@ -909,9 +940,13 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       textAlign: 'center',
     },
     gridCardBadge: {
-      ...theme.typography.label.md,
+      ...theme.typography.title.md,
       color: theme.colors.accent.primary,
       textAlign: 'center',
+      position: 'absolute',
+      bottom: theme.spacing.lg,
+      left: 0,
+      right: 0,
     },
     // Create profile card
     createCard: {
@@ -952,8 +987,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       color: theme.colors.text.primary,
     },
     modalSubtitle: {
-      ...theme.typography.body.md,
+      ...theme.typography.title.md,
       color: theme.colors.text.secondary,
+      fontWeight: '400',
     },
     modalInput: {
       fontSize: 28,
@@ -976,15 +1012,18 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     modalActions: {
       flexDirection: 'row',
+      justifyContent: 'center',
       gap: theme.spacing.lg,
       marginTop: theme.spacing.lg,
-      marginBottom: theme.spacing.md,
+      marginBottom: theme.spacing.xl,
     },
     modalButton: {
-      minHeight: 56,
+      minWidth: 280,
+      minHeight: 64,
       justifyContent: 'center',
+      alignItems: 'center',
       paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing.xl,
+      paddingHorizontal: theme.spacing['2xl'],
       borderWidth: 3,
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
@@ -992,6 +1031,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     modalButtonHorizontal: {
       flex: 1,
+      minWidth: 0,
     },
     modalButtonFocused: {
       borderColor: theme.colors.accent.primary,
@@ -1007,6 +1047,7 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
     },
     modalButtonsContainer: {
       gap: theme.spacing.md,
+      alignItems: 'center',
     },
     // Profile actions modal styles
     profileModalHeader: {
@@ -1047,8 +1088,9 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       gap: theme.spacing.md,
     },
     colorPickerLabel: {
-      ...theme.typography.label.md,
+      ...theme.typography.title.md,
       color: theme.colors.text.secondary,
+      fontWeight: '400',
       textAlign: 'center',
     },
     colorPickerRow: {

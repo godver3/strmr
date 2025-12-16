@@ -266,8 +266,6 @@ interface DropdownOption {
 }
 
 type SettingsGridItem =
-  | { type: 'title'; id: string; title: string }
-  | { type: 'tab-row'; id: string; tabs: TabOption[]; activeTab: SettingsTab; disabledTabs: SettingsTab[] }
   | { type: 'header'; id: string; title: string; description?: string }
   | { type: 'text-field'; id: string; label: string; value: string; fieldKey: string; options?: TextInputOptions }
   | { type: 'toggle'; id: string; label: string; value: boolean; fieldKey: string; description?: string }
@@ -275,60 +273,6 @@ type SettingsGridItem =
   | { type: 'button'; id: string; label: string; action: string; disabled?: boolean }
   | { type: 'button-row'; id: string; buttons: Array<{ label: string; action: string; disabled?: boolean }> }
   | { type: 'shelf-item'; id: string; shelf: BackendShelfConfig; index: number; total: number };
-
-// TEST: Direct TextInput matching search page style with tvParallaxProperties fix
-function TestTextInput({ theme }: { theme: NovaTheme }) {
-  const inputRef = useRef<TextInput>(null);
-  const [testValue, setTestValue] = useState('');
-
-  return (
-    <View style={{ marginBottom: theme.spacing.xl }}>
-      <SpatialNavigationFocusableView
-        focusKey="test-direct-input"
-        onSelect={() => inputRef.current?.focus()}
-        onBlur={() => inputRef.current?.blur()}>
-        {({ isFocused }: { isFocused: boolean }) => (
-          <Pressable tvParallaxProperties={{ enabled: false }}>
-            <TextInput
-              ref={inputRef}
-              {...(Platform.isTV ? { defaultValue: testValue } : { value: testValue })}
-              onChangeText={setTestValue}
-              style={[
-                {
-                  flex: 1,
-                  fontSize: 32,
-                  color: theme.colors.text.primary,
-                  paddingHorizontal: theme.spacing.lg,
-                  paddingVertical: theme.spacing.md,
-                  backgroundColor: theme.colors.background.surface,
-                  borderRadius: theme.radius.md,
-                  borderWidth: 2,
-                  borderColor: 'transparent',
-                  minHeight: 60,
-                },
-                isFocused && {
-                  borderColor: theme.colors.accent.primary,
-                  borderWidth: 3,
-                  shadowColor: theme.colors.accent.primary,
-                  shadowOpacity: 0.4,
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowRadius: 12,
-                },
-              ]}
-              placeholder="Search for movies or TV shows"
-              placeholderTextColor={theme.colors.text.muted}
-              autoCorrect={false}
-              autoCapitalize="none"
-              autoComplete="off"
-              textContentType="none"
-              spellCheck={false}
-            />
-          </Pressable>
-        )}
-      </SpatialNavigationFocusableView>
-    </View>
-  );
-}
 
 // TextInputModal Props for TV text editing
 interface TextInputModalProps {
@@ -2104,44 +2048,23 @@ function SettingsScreen() {
   );
 
   // Get current tab grid data
-  // Determine which tabs require backend to be reachable
-  const disabledTabs = useMemo<SettingsTab[]>(() => {
-    const requiresBackend: SettingsTab[] = ['playback', 'home', 'filtering', 'live'];
-    return isBackendReachable ? [] : requiresBackend;
-  }, [isBackendReachable]);
-
   const currentTabGridData = useMemo<SettingsGridItem[]>(() => {
-    // Title and tabs are included as part of the grid on TV
-    const titleAndTabs: SettingsGridItem[] = Platform.isTV
-      ? [
-          { type: 'title', id: 'settings-title', title: 'Settings' },
-          { type: 'tab-row', id: 'settings-tabs', tabs, activeTab, disabledTabs },
-        ]
-      : [];
-
-    let tabContent: SettingsGridItem[];
+    // Title and tabs are now rendered in a separate header section on TV
     switch (activeTab) {
       case 'connection':
-        tabContent = connectionGridData;
-        break;
+        return connectionGridData;
       case 'playback':
-        tabContent = playbackGridData;
-        break;
+        return playbackGridData;
       case 'home':
-        tabContent = homeGridData;
-        break;
+        return homeGridData;
       case 'filtering':
-        tabContent = filteringGridData;
-        break;
+        return filteringGridData;
       case 'live':
-        tabContent = liveGridData;
-        break;
+        return liveGridData;
       default:
-        tabContent = [];
+        return [];
     }
-
-    return [...titleAndTabs, ...tabContent];
-  }, [activeTab, tabs, disabledTabs, connectionGridData, playbackGridData, homeGridData, filteringGridData, liveGridData]);
+  }, [activeTab, connectionGridData, playbackGridData, homeGridData, filteringGridData, liveGridData]);
 
   // TV Grid action handler
   const handleGridAction = useCallback(
@@ -2209,41 +2132,6 @@ function SettingsScreen() {
   const renderGridItem = useCallback(
     ({ item }: { item: SettingsGridItem }) => {
       switch (item.type) {
-        case 'title':
-          return (
-            <View style={[styles.tvGridItemFullWidth, styles.tvGridTitleRow]}>
-              <Text style={styles.tvGridTitle}>{item.title}</Text>
-            </View>
-          );
-
-        case 'tab-row':
-          return (
-            <View style={[styles.tvGridItemFullWidth, styles.tvGridTabRow]}>
-              <SpatialNavigationNode orientation="horizontal">
-                <View style={styles.tvGridTabBar}>
-                  {item.tabs.map((tab) => {
-                    const isDisabled = item.disabledTabs.includes(tab.key);
-                    const tabButton = (
-                      <FocusablePressable
-                        key={tab.key}
-                        focusKey={`settings-tab-${tab.key}`}
-                        text={tab.label}
-                        onSelect={() => setActiveTab(tab.key)}
-                        style={[styles.tab, item.activeTab === tab.key && styles.tabActive]}
-                        disabled={isDisabled}
-                      />
-                    );
-                    // Default focus on connection tab
-                    if (tab.key === 'connection') {
-                      return <DefaultFocus key={tab.key}>{tabButton}</DefaultFocus>;
-                    }
-                    return tabButton;
-                  })}
-                </View>
-              </SpatialNavigationNode>
-            </View>
-          );
-
         case 'header':
           return (
             <View style={[styles.tvGridHeader, styles.tvGridItemFullWidth, styles.tvGridItemSpacing]}>
@@ -2394,26 +2282,57 @@ function SettingsScreen() {
     <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
-        <View style={styles.tvEdgeBuffer}>
-        {/* TV Layout: Entire settings in virtualized grid from top */}
-        {Platform.isTV && currentTabGridData.length > 0 && (
-          <View style={styles.tvGridContainer}>
-            {/* TEST: Direct TextInput on page without modal */}
-            <TestTextInput theme={theme} />
-            {/* END TEST */}
-            <SpatialNavigationVirtualizedGrid
-              data={currentTabGridData}
-              renderItem={renderGridItem}
-              numberOfColumns={1}
-              itemHeight={(styles.tvGridItemHeight as { height: number }).height}
-              numberOfRenderedRows={Math.max(currentTabGridData.length, 10)}
-              numberOfRowsVisibleOnScreen={Math.min(8, currentTabGridData.length)}
-              rowContainerStyle={styles.tvGridRowContainer}
-            />
+        {/* TV Layout: Header at top, then grid below */}
+        {Platform.isTV && (
+          <View style={styles.tvLayoutContainer}>
+            {/* Header Section - at top of screen */}
+            <View style={styles.tvHeader}>
+              <Text style={styles.tvScreenTitle}>Settings</Text>
+              <SpatialNavigationNode orientation="horizontal">
+                <View style={styles.tvTabBar}>
+                  {tabs.map((tab) => {
+                    const requiresBackend = ['playback', 'home', 'filtering', 'live'].includes(tab.key);
+                    const isDisabled = requiresBackend && !isBackendReachable;
+                    const isActiveTab = activeTab === tab.key;
+                    const tabButton = (
+                      <FocusablePressable
+                        key={tab.key}
+                        text={tab.label}
+                        onSelect={() => setActiveTab(tab.key)}
+                        style={[styles.tvTabButton, isActiveTab && styles.tvTabButtonActive]}
+                        disabled={isDisabled}
+                      />
+                    );
+                    if (tab.key === 'connection') {
+                      return <DefaultFocus key={tab.key}>{tabButton}</DefaultFocus>;
+                    }
+                    return tabButton;
+                  })}
+                </View>
+              </SpatialNavigationNode>
+            </View>
+
+            {/* Grid Content - with edge buffer */}
+            <View style={styles.tvContentArea}>
+              {currentTabGridData.length > 0 && (
+                <View style={styles.tvGridContainer}>
+                  <SpatialNavigationVirtualizedGrid
+                    data={currentTabGridData}
+                    renderItem={renderGridItem}
+                    numberOfColumns={1}
+                    itemHeight={(styles.tvGridItemHeight as { height: number }).height}
+                    numberOfRenderedRows={Math.max(currentTabGridData.length, 10)}
+                    numberOfRowsVisibleOnScreen={Math.min(8, currentTabGridData.length)}
+                    rowContainerStyle={styles.tvGridRowContainer}
+                  />
+                </View>
+              )}
+            </View>
           </View>
         )}
         {/* Mobile Layout: ScrollView with all content */}
         {!Platform.isTV && (
+        <View style={styles.mobileContainer}>
         <SpatialNavigationScrollView
           style={styles.container}
           contentContainerStyle={styles.contentContainer}
@@ -2927,8 +2846,8 @@ function SettingsScreen() {
             </View>
           )}
         </SpatialNavigationScrollView>
-        )}
         </View>
+        )}
 
         {/* Hidden Channels Modal - Mobile */}
         {!Platform.isTV && (
@@ -3236,6 +3155,44 @@ const createStyles = (theme: NovaTheme, screenWidth = 1920, screenHeight = 1080)
       padding: tvPadding,
       gap: theme.spacing.xl,
     },
+    // Mobile container
+    mobileContainer: {
+      flex: 1,
+    },
+    // TV Layout styles
+    tvLayoutContainer: {
+      flex: 1,
+    },
+    tvHeader: {
+      paddingHorizontal: tvEdgeBufferHorizontal,
+      paddingTop: theme.spacing.xl,
+      paddingBottom: theme.spacing.lg,
+    },
+    tvScreenTitle: {
+      ...theme.typography.title.xl,
+      fontSize: theme.typography.title.xl.fontSize * 1.2,
+      color: theme.colors.text.primary,
+      marginBottom: theme.spacing.md,
+    },
+    tvTabBar: {
+      flexDirection: 'row',
+      gap: theme.spacing.md,
+    },
+    tvTabButton: {
+      paddingHorizontal: theme.spacing['2xl'],
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.subtle,
+    },
+    tvTabButtonActive: {
+      borderWidth: 2,
+      borderColor: theme.colors.accent.primary,
+    },
+    tvContentArea: {
+      flex: 1,
+      paddingHorizontal: tvEdgeBufferHorizontal,
+    },
+    // Legacy styles kept for mobile
     tvEdgeBuffer: {
       flex: 1,
       paddingHorizontal: tvEdgeBufferHorizontal,

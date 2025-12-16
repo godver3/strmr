@@ -3696,6 +3696,7 @@ const createDetailsStyles = (theme: NovaTheme) => {
       alignItems: 'center',
       gap: theme.spacing.md,
       marginBottom: theme.spacing.lg,
+      ...(isTV ? { maxWidth: '70%' } : null),
     },
     title: {
       ...theme.typography.title.xl,

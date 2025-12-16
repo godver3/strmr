@@ -218,18 +218,6 @@ function LiveScreen() {
   const [filterText, setFilterText] = useState('');
   const [isFilterActive, setIsFilterActive] = useState(false);
   const [focusedChannel, setFocusedChannel] = useState<LiveChannel | null>(null);
-  const [focusedIndex, setFocusedIndex] = useState<number>(0);
-  const topGradientOpacity = useRef(new Animated.Value(0)).current;
-  const showTopGradient = focusedIndex >= 6;
-
-  // Animate top gradient opacity
-  useEffect(() => {
-    Animated.timing(topGradientOpacity, {
-      toValue: showTopGradient ? 1 : 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  }, [showTopGradient, topGradientOpacity]);
 
   const isActive = isFocused && !isMenuOpen && !isCategoryModalVisible && !isActionModalVisible && !isFilterActive;
 
@@ -263,6 +251,7 @@ function LiveScreen() {
     });
   }, [isActive, isFocused, isMenuOpen, isCategoryModalVisible, isActionModalVisible, isFilterActive]);
   const filterInputRef = useRef<TextInput>(null);
+  const tempFilterRef = useRef('');
   const { lock, unlock } = useLockSpatialNavigation();
   const scrollViewRef = useRef<RNScrollView | null>(null);
   const channelRefs = useRef<Record<string, unknown>>({});
@@ -418,7 +407,22 @@ function LiveScreen() {
   const handleBlur = useCallback(() => {
     // Unlock spatial navigation to re-enable d-pad navigation
     unlock();
+    // Sync filter text from ref on tvOS (like search page does)
+    if (Platform.isTV) {
+      const finalFilter = tempFilterRef.current;
+      setFilterText(finalFilter);
+    }
   }, [unlock]);
+
+  const handleFilterChangeText = useCallback((text: string) => {
+    if (Platform.isTV) {
+      // On tvOS, store in ref to avoid controlled input issues
+      tempFilterRef.current = text;
+    } else {
+      // On mobile, use normal controlled input
+      setFilterText(text);
+    }
+  }, []);
 
   const handleToggleFilter = useCallback(() => {
     // Prevent toggling if we're currently closing
@@ -436,10 +440,14 @@ function LiveScreen() {
           }, 500);
           return false;
         }
+        // Opening - sync tempFilterRef with current filterText
+        if (Platform.isTV) {
+          tempFilterRef.current = filterText;
+        }
         return true;
       });
     });
-  }, [withSelectGuard]);
+  }, [withSelectGuard, filterText]);
 
   const handleCloseFilter = useCallback(() => {
     // Prevent multiple close attempts
@@ -663,10 +671,7 @@ function LiveScreen() {
             handleChannelLongPress(channel);
           }}
           onFocus={() => {
-            const idx = combinedChannels.findIndex(c => c.id === channel.id);
-            console.log('[live] Grid item focused - index:', idx, 'channel:', channel.name);
             setFocusedChannel(channel);
-            setFocusedIndex(idx);
           }}>
           {({ isFocused }: { isFocused: boolean }) => (
             <View style={[styles.gridCard, isFocused && styles.gridCardFocused]}>
@@ -800,68 +805,60 @@ function LiveScreen() {
       <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
         <Stack.Screen options={{ headerShown: false }} />
         <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
-          {Platform.isTV && (
-            <Animated.View
-              pointerEvents="none"
-              style={[styles.topScrollGradient, { opacity: topGradientOpacity }]}>
-              <LinearGradient
-                colors={['rgba(0,0,0,0.95)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0)']}
-                locations={[0, 0.4, 1]}
-                start={{ x: 0.5, y: 0 }}
-                end={{ x: 0.5, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-            </Animated.View>
-          )}
           <View style={styles.container}>
+            {/* Fixed header with title and action buttons */}
             <SpatialNavigationNode orientation="vertical">
-              <View style={styles.headerRow}>
-                <Text style={styles.title}>Live TV</Text>
+              <DefaultFocus>
                 <SpatialNavigationNode orientation="horizontal">
-                  <View style={styles.actionsRow}>
-                    <FocusablePressable
-                      text="Categories"
-                      icon="albums-outline"
-                      onSelect={handleOpenCategoryModal}
-                      disabled={availableCategories.length === 0}
-                      focusKey="live-categories"
-                      style={styles.headerActionButton}
-                    />
-                    <FocusablePressable
-                      text={isFilterActive ? 'Close Filter' : 'Filter'}
-                      icon={isFilterActive ? 'close-outline' : 'filter-outline'}
-                      onSelect={handleToggleFilter}
-                      focusKey="live-filter"
-                      style={styles.headerActionButton}
-                    />
+                  <View style={styles.headerRow}>
+                    <Text style={styles.title}>Live TV</Text>
+                    <View style={styles.actionsRow}>
+                      <FocusablePressable
+                        text="Categories"
+                        icon="albums-outline"
+                        onSelect={handleOpenCategoryModal}
+                        disabled={availableCategories.length === 0}
+                        focusKey="live-categories"
+                        style={styles.headerActionButton}
+                      />
+                      <FocusablePressable
+                        text={isFilterActive ? 'Close Filter' : 'Filter'}
+                        icon={isFilterActive ? 'close-outline' : 'filter-outline'}
+                        onSelect={handleToggleFilter}
+                        focusKey="live-filter"
+                        style={styles.headerActionButton}
+                      />
+                    </View>
                   </View>
                 </SpatialNavigationNode>
+              </DefaultFocus>
+            </SpatialNavigationNode>
+
+            {isFilterActive && !Platform.isTV && (
+              <View style={styles.filterContainer}>
+                <SpatialNavigationFocusableView
+                  focusKey="live-filter-input"
+                  onSelect={() => filterInputRef.current?.focus()}>
+                  {({ isFocused: filterFocused }: { isFocused: boolean }) => (
+                    <TextInput
+                      ref={filterInputRef}
+                      style={[styles.filterInput, filterFocused && styles.filterInputFocused]}
+                      placeholder="Filter channels by name..."
+                      placeholderTextColor={theme.colors.text.muted}
+                      value={filterText}
+                      onChangeText={setFilterText}
+                      onFocus={handleFocus}
+                      onBlur={handleBlur}
+                      clearButtonMode="while-editing"
+                      showSoftInputOnFocus={true}
+                    />
+                  )}
+                </SpatialNavigationFocusableView>
               </View>
+            )}
 
-              {isFilterActive && !Platform.isTV && (
-                <View style={styles.filterContainer}>
-                  <SpatialNavigationFocusableView
-                    focusKey="live-filter-input"
-                    onSelect={() => filterInputRef.current?.focus()}>
-                    {({ isFocused: filterFocused }: { isFocused: boolean }) => (
-                      <TextInput
-                        ref={filterInputRef}
-                        style={[styles.filterInput, filterFocused && styles.filterInputFocused]}
-                        placeholder="Filter channels by name..."
-                        placeholderTextColor={theme.colors.text.muted}
-                        value={filterText}
-                        onChangeText={setFilterText}
-                        onFocus={handleFocus}
-                        onBlur={handleBlur}
-                        clearButtonMode="while-editing"
-                        showSoftInputOnFocus={true}
-                      />
-                    )}
-                  </SpatialNavigationFocusableView>
-                </View>
-              )}
-
-              {!hasPlaylistUrl ? (
+            {/* Content area */}
+            {!hasPlaylistUrl ? (
                 <View style={styles.emptyState}>
                   <Text style={styles.emptyTitle}>Add an IPTV playlist</Text>
                   <Text style={styles.emptyMessage}>
@@ -976,7 +973,6 @@ function LiveScreen() {
                   ) : null}
                 </>
               )}
-            </SpatialNavigationNode>
           </View>
         </FixedSafeAreaView>
       </SpatialNavigationRoot>
@@ -1078,7 +1074,7 @@ function LiveScreen() {
                           placeholder="Type to filter channels..."
                           placeholderTextColor={theme.colors.text.muted}
                           {...(Platform.isTV ? { defaultValue: filterText } : { value: filterText })}
-                          onChangeText={setFilterText}
+                          onChangeText={handleFilterChangeText}
                           onFocus={handleFocus}
                           onBlur={handleBlur}
                           autoCorrect={false}
@@ -1241,6 +1237,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     scrollWrapper: {
       flex: 1,
+      overflow: 'hidden',
     },
     scrollView: {
       flex: 1,
@@ -1707,15 +1704,6 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
     },
     regularGrid: {
       height: availableGridHeight - (gridItemHeight * 2 + gridHeaderSize + gap) - gridHeaderSize, // Remaining minus header
-    },
-    // Top gradient overlay when scrolled past first row
-    topScrollGradient: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      height: screenHeight * 0.2, // 20% of screen height
-      zIndex: 10,
     },
   });
 
