@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Default configuration
-export NOVASTREAM_CONFIG="${NOVASTREAM_CONFIG:-$SCRIPT_DIR/../config/settings.json}"
+export STRMR_CONFIG="${STRMR_CONFIG:-${NOVASTREAM_CONFIG:-$SCRIPT_DIR/../cache/settings.json}}"
 export NOVASTREAM_BACKEND_HOST="${NOVASTREAM_BACKEND_HOST:-localhost}"
 export NOVASTREAM_BACKEND_PORT="${NOVASTREAM_BACKEND_PORT:-7777}"
 export NOVASTREAM_ADMIN_PORT="${NOVASTREAM_ADMIN_PORT:-7778}"

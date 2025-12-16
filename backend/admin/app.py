@@ -17,7 +17,7 @@ from flask import Flask, jsonify, render_template, request
 app = Flask(__name__)
 
 # Configuration
-CONFIG_PATH = os.environ.get("NOVASTREAM_CONFIG", "/root/NovaStream/backend/config/settings.json")
+CONFIG_PATH = os.environ.get("STRMR_CONFIG", os.environ.get("NOVASTREAM_CONFIG", "/root/strmr/backend/cache/settings.json"))
 BACKEND_HOST = os.environ.get("NOVASTREAM_BACKEND_HOST", "localhost")
 BACKEND_PORT = int(os.environ.get("NOVASTREAM_BACKEND_PORT", "7777"))
 ADMIN_PORT = int(os.environ.get("NOVASTREAM_ADMIN_PORT", "7778"))

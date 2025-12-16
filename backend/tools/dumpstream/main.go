@@ -9,7 +9,7 @@ import (
 
 func main() {
 	var (
-		configPath = flag.String("config", "config/settings.json", "Path to backend settings.json")
+		configPath = flag.String("config", "cache/settings.json", "Path to backend settings.json")
 	)
 	flag.Parse()
 

@@ -48,9 +48,12 @@ func main() {
 	}
 
 	// Determine config path (env or default)
-	configPath := os.Getenv("NOVASTREAM_CONFIG")
+	configPath := os.Getenv("STRMR_CONFIG")
 	if configPath == "" {
-		configPath = filepath.Join("config", "settings.json")
+		configPath = os.Getenv("NOVASTREAM_CONFIG") // legacy env var
+	}
+	if configPath == "" {
+		configPath = filepath.Join("cache", "settings.json")
 	}
 
 	// Init config manager and load settings (creates defaults if missing)
