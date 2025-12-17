@@ -26,7 +26,8 @@ Object {
     "warning": "#f1c40f",
   },
   "text": Object {
-    "inverse": "#050507",
+    "disabled": "#555866",
+    "inverse": "#ffffff",
     "muted": "#8c90a6",
     "primary": "#ffffff",
     "secondary": "#c7cad6",
@@ -60,7 +61,8 @@ Object {
     "warning": "#f1c40f",
   },
   "text": Object {
-    "inverse": "#050507",
+    "disabled": "#555866",
+    "inverse": "#ffffff",
     "muted": "#8c90a6",
     "primary": "#ffffff",
     "secondary": "#c7cad6",

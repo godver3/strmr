@@ -11,6 +11,7 @@ jest.mock('react-native', () => {
     Platform: {
       ...actual.Platform,
       isTV: false,
+      OS: 'android',
     },
     useWindowDimensions: jest.fn(() => ({ width: 800, height: 600 })),
   };
@@ -91,9 +92,9 @@ describe('NovaThemeProvider', () => {
     expect(capturedTheme!.spacing.lg).toBe(8); // 16 * 0.5
 
     // Check that typography is scaled down for TV
-    // With width 800, we get 'cozy' breakpoint (1.05 multiplier) * TV scale (0.5) = 0.525
-    expect(capturedTheme!.typography.body.md.fontSize).toBe(8.4); // 16 * 0.525
-    expect(capturedTheme!.typography.title.lg.fontSize).toBe(12.6); // 24 * 0.525
+    // With Platform.isTV true, we use 'immersive' breakpoint (1.2 multiplier) * TV scale (0.5) = 0.6
+    expect(capturedTheme!.typography.body.md.fontSize).toBe(9.6); // 16 * 0.6
+    expect(capturedTheme!.typography.title.lg.fontSize).toBe(14.4); // 24 * 0.6
   });
 
   it('uses normal scaling when Platform.isTV is false', () => {
