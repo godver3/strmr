@@ -1513,11 +1513,56 @@ export default function DetailsScreen() {
       // Note: Loading screen is now shown earlier (in checkAndShowResumeModal or handleResumePlayback/handlePlayFromBeginning)
       // so users see it immediately when they click play, not after the prequeue resolves
 
-      const hasAnyHDR = prequeueStatus.hasDolbyVision || prequeueStatus.hasHdr10;
-
       // Get start offset from pending ref (for resume playback) - get it early as we may use it for HLS session
       const startOffset = pendingStartOffsetRef.current;
       pendingStartOffsetRef.current = null;
+
+      // Check for external player FIRST - they handle HDR natively and don't need HLS
+      const isExternalPlayer = playbackPreference === 'infuse' || playbackPreference === 'outplayer';
+      if (isExternalPlayer) {
+        console.log('[prequeue] External player selected, skipping HLS creation');
+        const label = playbackPreference === 'outplayer' ? 'Outplayer' : 'Infuse';
+
+        // Build backend proxy URL for external player (handles IP-locked debrid URLs)
+        const baseUrl = apiService.getBaseUrl().replace(/\/$/, '');
+        const apiKey = apiService.getApiKey().trim();
+        const params = new URLSearchParams();
+        params.set('path', prequeueStatus.streamPath);
+        params.set('transmux', '0'); // No transmuxing needed for external players
+        if (apiKey) {
+          params.set('apiKey', apiKey);
+        }
+        const directUrl = `${baseUrl}/video/stream?${params.toString()}`;
+        console.log('[prequeue] Using backend proxy URL for external player:', directUrl);
+
+        const externalTargets = buildExternalPlayerTargets(playbackPreference, directUrl, isIosWeb);
+        console.log('[prequeue] External player targets:', externalTargets);
+
+        if (externalTargets.length > 0) {
+          const { Linking } = require('react-native');
+
+          for (const externalUrl of externalTargets) {
+            try {
+              const supported = await Linking.canOpenURL(externalUrl);
+              if (supported) {
+                console.log(`[prequeue] Launching ${label} with URL:`, externalUrl);
+                hideLoadingScreen();
+                await Linking.openURL(externalUrl);
+                return;
+              }
+            } catch (err) {
+              console.error(`[prequeue] Failed to launch ${label}:`, err);
+            }
+          }
+
+          // External player not available, fall through to native
+          console.log(`[prequeue] ${label} not available, falling back to native player`);
+          setSelectionError(`${label} is not installed. Using native player.`);
+        }
+        // Fall through to native player if external player targets not available
+      }
+
+      const hasAnyHDR = prequeueStatus.hasDolbyVision || prequeueStatus.hasHdr10;
 
       // Build stream URL
       let streamUrl: string;
@@ -1643,39 +1688,7 @@ export default function DetailsScreen() {
         displayTitle = `${title} - S${seasonStr}E${episodeStr}`;
       }
 
-      console.log('[prequeue] playbackPreference:', playbackPreference);
-
-      // Check if user wants external player (Infuse/Outplayer)
-      if (playbackPreference !== 'native') {
-        const externalTargets = buildExternalPlayerTargets(playbackPreference, streamUrl, isIosWeb);
-        console.log('[prequeue] External player targets:', externalTargets);
-
-        if (externalTargets.length > 0) {
-          // Try to launch external player
-          const { Linking } = require('react-native');
-          const label = playbackPreference === 'outplayer' ? 'Outplayer' : 'Infuse';
-
-          for (const externalUrl of externalTargets) {
-            try {
-              const supported = await Linking.canOpenURL(externalUrl);
-              if (supported) {
-                console.log(`[prequeue] Launching ${label} with URL:`, externalUrl);
-                hideLoadingScreen();
-                await Linking.openURL(externalUrl);
-                return;
-              }
-            } catch (err) {
-              console.error(`[prequeue] Failed to launch ${label}:`, err);
-            }
-          }
-
-          // External player not available, fall through to native
-          console.log(`[prequeue] ${label} not available, falling back to native player`);
-          setSelectionError(`${label} is not installed. Using native player.`);
-        }
-      }
-
-      // Launch native player
+      // Launch native player (external players would have returned early above)
       router.push({
         pathname: '/player',
         params: {

@@ -142,6 +142,14 @@ const describePlaybackStatusMessage = (
 export const sanitizeStreamUrlForExternalPlayers = (urlString: string) => {
   try {
     const parsed = new URL(urlString);
+
+    // Only sanitize URLs that go through our video stream proxy (have apiKey or path params)
+    // Don't modify direct debrid/CDN URLs
+    const isProxyUrl = parsed.searchParams.has('apiKey') || parsed.searchParams.has('path');
+    if (!isProxyUrl) {
+      return urlString;
+    }
+
     parsed.searchParams.delete('target');
     parsed.searchParams.delete('format');
     parsed.searchParams.set('transmux', '0');
@@ -400,6 +408,66 @@ export const buildStreamUrl = (
   return search ? `${prefix}?${search}` : prefix;
 };
 
+/**
+ * Build a direct stream URL for external players like Infuse.
+ * External players don't need our HLS transcoding or proxy - they handle everything natively.
+ * - For debrid: use backend proxy URL (to handle IP-locked RD URLs)
+ * - For usenet: build a direct WebDAV URL with auth
+ */
+export const buildDirectUrlForExternalPlayer = async (
+  playback: { webdavPath: string; sourceNzbPath?: string },
+  settings: any,
+  backendApiKey?: string | null,
+): Promise<string | null> => {
+  const isDebridPath = playback.webdavPath.includes('/debrid/');
+
+  // For debrid content, use backend proxy URL
+  // Real-Debrid URLs are IP-locked, so we proxy through the backend which has access
+  if (isDebridPath) {
+    const base = apiService.getBaseUrl().replace(/\/$/, '');
+    const params = new URLSearchParams();
+    params.set('path', playback.webdavPath);
+    params.set('transmux', '0'); // No transmuxing needed for external players
+    const trimmedApiKey = backendApiKey?.trim() || apiService.getApiKey().trim();
+    if (trimmedApiKey) {
+      params.set('apiKey', trimmedApiKey);
+    }
+    const proxyUrl = `${base}/video/stream?${params.toString()}`;
+    console.log('🎬 [External Player] Using backend proxy URL for debrid:', proxyUrl);
+    return proxyUrl;
+  }
+
+  // For usenet content, build direct WebDAV URL with auth
+  if (!isDebridPath && settings?.webdav) {
+    const webdavConfig = settings.webdav;
+    let normalizedPath = playback.webdavPath;
+    try {
+      normalizedPath = decodeURIComponent(playback.webdavPath);
+    } catch {
+      // ignore decode errors
+    }
+
+    try {
+      const baseUrl = new URL(webdavConfig.baseUrl || apiService.getBaseUrl());
+      const username = encodeURIComponent(webdavConfig.username || '');
+      const password = encodeURIComponent(webdavConfig.password || '');
+
+      const encodedPath = normalizedPath
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
+
+      const directUrl = `${baseUrl.protocol}//${username}:${password}@${baseUrl.host}${encodedPath}`;
+      console.log('🎬 [External Player] Using direct WebDAV URL');
+      return directUrl;
+    } catch (error) {
+      console.warn('Failed to construct direct WebDAV URL for external player:', error);
+    }
+  }
+
+  return null;
+};
+
 export const buildExternalPlayerTargets = (
   player: PlaybackPreference,
   streamUrl: string,
@@ -570,6 +638,128 @@ export const initiatePlayback = async (
     signal: options.signal,
   });
 
+  // Check if using external player - they handle HDR natively and don't need HLS
+  const isExternalPlayer = playbackPreference === 'infuse' || playbackPreference === 'outplayer';
+
+  // For external players, skip HDR detection and HLS - they handle everything natively
+  // Just build the direct URL and launch
+  if (isExternalPlayer) {
+    console.log('[initiatePlayback] External player selected, skipping HLS creation');
+    setSelectionInfo(null);
+
+    const player = playbackPreference;
+    const label = player === 'outplayer' ? 'Outplayer' : 'Infuse';
+
+    // Build direct URL for external player
+    setSelectionInfo(`Preparing stream for ${label}…`);
+    const directExternalUrl = await buildDirectUrlForExternalPlayer(playback, settings, backendApiKey);
+    if (!directExternalUrl) {
+      setSelectionError(`Unable to build direct URL for ${label}. Launching native player instead.`);
+      // Fall back to native player - continue with rest of function
+    } else {
+      console.log('[initiatePlayback] Using direct URL for external player:', directExternalUrl);
+
+      const externalTargets = buildExternalPlayerTargets(player, directExternalUrl, isIosWeb);
+
+      if (externalTargets.length === 0) {
+        setSelectionError(`${label} playback is not available on this platform. Launching native player instead.`);
+        // Fall back to native - continue with rest of function
+      } else {
+        // Launch external player with direct URL
+        try {
+          if (Platform.OS === 'web') {
+            const target = externalTargets[0];
+
+            if (typeof window === 'undefined') {
+              throw new Error('Unable to access window to trigger external player launch.');
+            }
+
+            setSelectionInfo(`Preparing ${label} launch…`);
+
+            let clipboardCopied = false;
+            if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+              try {
+                await navigator.clipboard.writeText(directExternalUrl);
+                clipboardCopied = true;
+              } catch (clipboardError) {
+                console.warn('Unable to copy stream URL to clipboard.', clipboardError);
+              }
+            }
+
+            if (!clipboardCopied) {
+              setSelectionError(`Copy this stream URL into ${label}: ${directExternalUrl}`);
+            }
+
+            const attemptMessage = clipboardCopied
+              ? `Stream URL copied. Attempting to open ${label}… If nothing happens, paste the copied stream URL into ${label}.`
+              : `Attempting to open ${label}… If nothing happens, copy the stream URL into ${label} manually.`;
+            setSelectionInfo(attemptMessage);
+
+            if (options.onExternalPlayerLaunch) {
+              options.onExternalPlayerLaunch();
+            }
+
+            try {
+              window.location.assign(target);
+            } catch (openError) {
+              console.warn('Failed to open external player via window.location:', openError);
+              setSelectionError(`Unable to launch ${label} automatically. Paste the stream URL into the app manually.`);
+            }
+            return;
+          }
+
+          // Native platform (iOS/tvOS)
+          let lastError: unknown = null;
+          let sawUnsupported = false;
+
+          for (const externalUrl of externalTargets) {
+            try {
+              const supported = await Linking.canOpenURL(externalUrl);
+              if (!supported) {
+                sawUnsupported = true;
+                continue;
+              }
+
+              if (options.onExternalPlayerLaunch) {
+                options.onExternalPlayerLaunch();
+              }
+
+              await Linking.openURL(externalUrl);
+              setSelectionInfo(`Opening ${label}…`);
+              return;
+            } catch (err) {
+              lastError = err;
+              console.error(`⚠️ Unable to launch ${label} via ${externalUrl}`, err);
+            }
+          }
+
+          if (player === 'outplayer' && sawUnsupported && Platform.OS === 'ios') {
+            const appStoreUrl = 'https://apps.apple.com/app/outplayer/id1449923287';
+            try {
+              await Linking.openURL(appStoreUrl);
+            } catch (storeError) {
+              console.warn('⚠️ Unable to open Outplayer App Store listing.', storeError);
+            }
+          }
+
+          if (lastError) {
+            console.error(`⚠️ Exhausted external targets for ${label}`, lastError);
+          }
+
+          const fallbackMessage = sawUnsupported
+            ? `${label} is not installed. Launching native player instead.`
+            : `Unable to launch ${label}. Launching native player instead.`;
+          setSelectionError(fallbackMessage);
+          // Fall through to native player below
+        } catch (err) {
+          console.error(`⚠️ Error while launching ${label}`, err);
+          setSelectionError(`Unable to launch ${label}. Launching native player instead.`);
+          // Fall through to native player below
+        }
+      }
+    }
+  }
+
   // Fetch metadata to detect HDR content (Dolby Vision or HDR10)
   // VLCKit does not support HDR output on iOS - it tone-maps to SDR
   // Use HLS with native AVPlayer for true HDR playback
@@ -702,162 +892,25 @@ export const initiatePlayback = async (
   // Don't show "Stream ready" toast as it might overlay the player content
   setSelectionInfo(null);
 
+  // If we reach here, we're using the native player
+  // (External players would have returned early above)
   console.log(
-    '[initiatePlayback] playbackPreference:',
+    '[initiatePlayback] Using native player, playbackPreference:',
     playbackPreference,
     'Platform.OS:',
     Platform.OS,
-    'Platform.isTV:',
-    Platform.isTV,
   );
 
-  if (playbackPreference === 'native') {
-    console.log('[initiatePlayback] Using native player (preference is native)');
-    launchNativePlayer(streamUrl, headerImage, title, router, {
-      ...options,
-      ...(hlsDuration ? { durationHint: hlsDuration } : {}),
-      sourcePath: playback.webdavPath,
-      ...(displayName ? { displayName } : {}),
-      ...(hasDolbyVision ? { dv: true } : {}),
-      ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
-      ...(hasHDR10 ? { hdr10: true } : {}),
-      ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
-    });
-    return;
-  }
-
-  const player = playbackPreference;
-  const label = player === 'outplayer' ? 'Outplayer' : 'Infuse';
-  const externalTargets = buildExternalPlayerTargets(player, streamUrl, isIosWeb);
-  console.log('[initiatePlayback] External player:', player, 'targets:', externalTargets, 'isIosWeb:', isIosWeb);
-
-  if (externalTargets.length === 0) {
-    console.log('[initiatePlayback] No external targets, falling back to native');
-    setSelectionError(`${label} playback is not available on this platform. Launching native player instead.`);
-    launchNativePlayer(streamUrl, headerImage, title, router, {
-      ...options,
-      ...(hlsDuration ? { durationHint: hlsDuration } : {}),
-      sourcePath: playback.webdavPath,
-      ...(displayName ? { displayName } : {}),
-      ...(hasDolbyVision ? { dv: true } : {}),
-      ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
-      ...(hasHDR10 ? { hdr10: true } : {}),
-      ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
-    });
-    return;
-  }
-
-  try {
-    if (Platform.OS === 'web') {
-      const target = externalTargets[0];
-      const manualUrl = sanitizeStreamUrlForExternalPlayers(streamUrl);
-
-      if (typeof window === 'undefined') {
-        throw new Error('Unable to access window to trigger external player launch.');
-      }
-
-      setSelectionInfo(`Preparing ${label} launch…`);
-
-      let clipboardCopied = false;
-      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        try {
-          await navigator.clipboard.writeText(manualUrl);
-          clipboardCopied = true;
-        } catch (clipboardError) {
-          console.warn('Unable to copy stream URL to clipboard.', clipboardError);
-        }
-      }
-
-      if (!clipboardCopied) {
-        setSelectionError(`Copy this stream URL into ${label}: ${manualUrl}`);
-      }
-
-      const attemptMessage = clipboardCopied
-        ? `Stream URL copied. Attempting to open ${label}… If nothing happens, paste the copied stream URL into ${label}.`
-        : `Attempting to open ${label}… If nothing happens, copy the stream URL into ${label} manually.`;
-      setSelectionInfo(attemptMessage);
-
-      // Hide loading screen before launching external player
-      if (options.onExternalPlayerLaunch) {
-        options.onExternalPlayerLaunch();
-      }
-
-      try {
-        window.location.assign(target);
-      } catch (openError) {
-        console.warn('Failed to open external player via window.location:', openError);
-        setSelectionError(`Unable to launch ${label} automatically. Paste the stream URL into the app manually.`);
-      }
-
-      return;
-    }
-
-    let lastError: unknown = null;
-    let sawUnsupported = false;
-
-    for (const externalUrl of externalTargets) {
-      try {
-        const supported = await Linking.canOpenURL(externalUrl);
-        if (!supported) {
-          sawUnsupported = true;
-          continue;
-        }
-
-        // Hide loading screen before launching external player
-        if (options.onExternalPlayerLaunch) {
-          options.onExternalPlayerLaunch();
-        }
-
-        await Linking.openURL(externalUrl);
-        setSelectionInfo(`Opening ${label}…`);
-        return;
-      } catch (err) {
-        lastError = err;
-        console.error(`⚠️ Unable to launch ${label} via ${externalUrl}`, err);
-      }
-    }
-
-    if (player === 'outplayer' && sawUnsupported && Platform.OS === 'ios') {
-      const appStoreUrl = 'https://apps.apple.com/app/outplayer/id1449923287';
-      try {
-        await Linking.openURL(appStoreUrl);
-      } catch (storeError) {
-        console.warn('⚠️ Unable to open Outplayer App Store listing.', storeError);
-      }
-    }
-
-    if (lastError) {
-      console.error(`⚠️ Exhausted external targets for ${label}`, lastError);
-    }
-
-    const fallbackMessage = sawUnsupported
-      ? `${label} is not installed. Launching native player instead.`
-      : `Unable to launch ${label}. Launching native player instead.`;
-    setSelectionError(fallbackMessage);
-    launchNativePlayer(streamUrl, headerImage, title, router, {
-      ...options,
-      ...(hlsDuration ? { durationHint: hlsDuration } : {}),
-      sourcePath: playback.webdavPath,
-      ...(displayName ? { displayName } : {}),
-      ...(hasDolbyVision ? { dv: true } : {}),
-      ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
-      ...(hasHDR10 ? { hdr10: true } : {}),
-      ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
-    });
-  } catch (err) {
-    console.error(`⚠️ Error while launching ${label}`, err);
-    setSelectionError(`Unable to launch ${label}. Launching native player instead.`);
-    launchNativePlayer(streamUrl, headerImage, title, router, {
-      ...options,
-      ...(hlsDuration ? { durationHint: hlsDuration } : {}),
-      sourcePath: playback.webdavPath,
-      ...(displayName ? { displayName } : {}),
-      ...(hasDolbyVision ? { dv: true } : {}),
-      ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
-      ...(hasHDR10 ? { hdr10: true } : {}),
-      ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
-    });
-  }
+  launchNativePlayer(streamUrl, headerImage, title, router, {
+    ...options,
+    ...(hlsDuration ? { durationHint: hlsDuration } : {}),
+    sourcePath: playback.webdavPath,
+    ...(displayName ? { displayName } : {}),
+    ...(hasDolbyVision ? { dv: true } : {}),
+    ...(hasDolbyVision && dolbyVisionProfile ? { dvProfile: dolbyVisionProfile } : {}),
+    ...(hasHDR10 ? { hdr10: true } : {}),
+    ...(typeof options.startOffset === 'number' ? { startOffset: options.startOffset } : {}),
+  });
 };
 
 export const extractErrorMessage = (value: unknown): string => {

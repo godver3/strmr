@@ -1363,6 +1363,20 @@ class ApiService {
     return this.request<VideoMetadata>(`/video/metadata?${params.toString()}`);
   }
 
+  /**
+   * Get the direct download URL for a given path.
+   * For debrid paths, this unrestricts the link and returns the CDN URL.
+   * Useful for external players like Infuse that don't need our proxy.
+   */
+  async getDirectUrl(path: string): Promise<{ url: string }> {
+    const params = new URLSearchParams({ path });
+    const authKey = this.getApiKey().trim();
+    if (authKey) {
+      params.set('apiKey', authKey);
+    }
+    return this.request<{ url: string }>(`/video/direct-url?${params.toString()}`);
+  }
+
   async createHlsSession(params: {
     path: string;
     dv?: boolean;
