@@ -28,6 +28,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { isTablet } from '@/theme/tokens/tvScale';
 
 // TVMenuControl is available on tvOS but not typed in RN types
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1891,8 +1892,13 @@ export default function PlayerScreen() {
 
     unlockOrientation();
 
-    // Cleanup: lock orientation back to portrait when player closes
+    // Cleanup: lock orientation back to portrait when player closes (phones only)
+    // Tablets should retain free orientation
     return () => {
+      if (isTablet) {
+        console.log('[Player] Skipping orientation lock on tablet');
+        return;
+      }
       const lockOrientation = async () => {
         try {
           // Dynamic require to avoid loading native module at parse time

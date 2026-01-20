@@ -10,6 +10,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { isTablet } from '@/theme/tokens/tvScale';
 
 interface ControlsProps {
   paused: boolean;
@@ -392,10 +393,14 @@ const Controls: React.FC<ControlsProps> = ({
           )}
         </View>
       )}
-      {/* Mobile subtitle offset controls - above play button in landscape, below in portrait */}
-      {isMobile && showSubtitleOffset && (
+      {/* Mobile subtitle offset controls - phones: above play button in landscape, tablets: below play button */}
+      {isMobile && showSubtitleOffset && !isLiveTV && (
         <View
-          style={[styles.subtitleOffsetContainer, isLandscape && styles.subtitleOffsetContainerLandscape]}
+          style={[
+            styles.subtitleOffsetContainer,
+            isLandscape && !isTablet && styles.subtitleOffsetContainerLandscape,
+            isLandscape && isTablet && styles.subtitleOffsetContainerTabletLandscape,
+          ]}
           pointerEvents="box-none">
           <View style={styles.subtitleOffsetRow}>
             <Pressable onPress={onSubtitleOffsetEarlier} style={styles.subtitleOffsetButton}>
@@ -462,33 +467,6 @@ const Controls: React.FC<ControlsProps> = ({
                     )}
                   </View>
                 )}
-                {/* Mobile landscape: track selection and PiP in main row */}
-                {isMobile && isLandscape && (hasAudioSelection || hasSubtitleSelection || showPipButton) && (
-                  <View style={styles.mobileTrackGroup}>
-                    {hasAudioSelection && audioSummary && (
-                      <Pressable onPress={handleOpenAudioMenu} style={styles.mobileTrackButton}>
-                        <Ionicons name="musical-notes" size={18} color={theme.colors.text.primary} />
-                        <Text style={styles.mobileTrackLabel}>{audioSummary}</Text>
-                      </Pressable>
-                    )}
-                    {hasSubtitleSelection && subtitleSummary && (
-                      <Pressable onPress={handleOpenSubtitlesMenu} style={styles.mobileTrackButton}>
-                        <Ionicons name="chatbubble-ellipses" size={18} color={theme.colors.text.primary} />
-                        <Text style={styles.mobileTrackLabel}>{subtitleSummary}</Text>
-                      </Pressable>
-                    )}
-                    {showPipButton && (
-                      <Pressable onPress={onEnterPip} style={styles.mobileTrackButton}>
-                        <MaterialCommunityIcons
-                          name="picture-in-picture-bottom-right"
-                          size={18}
-                          color={theme.colors.text.primary}
-                        />
-                        <Text style={styles.mobileTrackLabel}>PiP</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                )}
                 <View style={[styles.seekContainer, isMobile && styles.seekContainerMobile]} pointerEvents="box-none">
                   <SeekBar
                     currentTime={currentTime}
@@ -529,14 +507,13 @@ const Controls: React.FC<ControlsProps> = ({
               </View>
             </View>
           )}
-          {/* Secondary row: hidden in mobile landscape (track selection moved to main row) */}
-          {!(isMobile && isLandscape) &&
-            (hasAudioSelection ||
-              hasSubtitleSelection ||
-              (isTvPlatform && streamInfo) ||
-              (isTvPlatform && (onPreviousEpisode || onNextEpisode)) ||
-              (isTvPlatform && showSubtitleOffset) ||
-              (showPipButton && !isLandscape)) && (
+          {/* Secondary row: control buttons below progress bar */}
+          {(hasAudioSelection ||
+            hasSubtitleSelection ||
+            (isTvPlatform && streamInfo) ||
+            (isTvPlatform && (onPreviousEpisode || onNextEpisode)) ||
+            (isTvPlatform && showSubtitleOffset) ||
+            showPipButton) && (
               <SpatialNavigationNode key={secondaryRowKey} orientation="horizontal">
                 <View style={[styles.secondaryRow, isSeeking && styles.seekingDisabled]} pointerEvents="box-none">
                   {hasAudioSelection && audioSummary && (
@@ -604,8 +581,8 @@ const Controls: React.FC<ControlsProps> = ({
                       <Text style={styles.trackLabel}>{subtitleSummary}</Text>
                     </View>
                   )}
-                  {/* PiP button for mobile portrait */}
-                  {showPipButton && !isLandscape && (
+                  {/* PiP button for mobile */}
+                  {showPipButton && (
                     <View style={styles.trackButtonGroup} pointerEvents="box-none">
                       <Pressable
                         onPress={onEnterPip}
@@ -912,29 +889,6 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
     seekingDisabled: {
       opacity: 0.3,
     },
-    // Mobile landscape: compact track selection in main row
-    mobileTrackGroup: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.sm,
-      marginRight: theme.spacing.md,
-      marginTop: -2, // lift buttons slightly
-    },
-    mobileTrackButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: 'rgba(255, 255, 255, 0.15)',
-      borderRadius: theme.radius.sm,
-      paddingVertical: theme.spacing.xs,
-      paddingHorizontal: theme.spacing.sm,
-      gap: theme.spacing.xs,
-    },
-    mobileTrackLabel: {
-      ...theme.typography.body.sm,
-      color: theme.colors.text.primary,
-      fontSize: 12,
-      flexShrink: 1,
-    },
     buttonGroup: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -960,7 +914,10 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       justifyContent: 'center',
     },
     subtitleOffsetContainerLandscape: {
-      top: '25%', // Above play button in landscape (with clearance)
+      top: '25%', // Above play button in landscape (with clearance) - phones only
+    },
+    subtitleOffsetContainerTabletLandscape: {
+      top: '65%', // Below play button in landscape - tablets have more vertical space
     },
     subtitleOffsetRow: {
       flexDirection: 'row',
