@@ -82,6 +82,11 @@ type VideoHandler struct {
 	userSettingsSvc   UserSettingsProvider
 	clientSettingsSvc ClientSettingsProvider
 	configManager     ConfigProvider
+
+	// Metadata response cache for /video/metadata endpoint
+	// Prevents repeated ffprobe calls during playback
+	metadataCacheMu sync.RWMutex
+	metadataCache   map[string]*cachedMetadataEntry
 }
 
 // UserSettingsProvider interface for accessing user settings
@@ -159,6 +164,7 @@ func newVideoHandler(transmuxEnabled bool, ffmpegPath, ffprobePath, hlsTempDir s
 		streamer:               provider,
 		hlsManager:             hlsMgr,
 		subtitleExtractManager: subtitleMgr,
+		metadataCache:          make(map[string]*cachedMetadataEntry),
 	}
 }
 
@@ -1003,6 +1009,14 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		sanitizedPath = filePath
 	}
 
+	// Check cache first to avoid repeated ffprobe calls during playback
+	if cachedResp := h.getCachedMetadata(cleanPath); cachedResp != nil {
+		log.Printf("[video] ProbeVideo: using cached metadata for path=%q", cleanPath)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cachedResp)
+		return
+	}
+
 	// Extract profile info from query params for DV policy check
 	profileID := r.URL.Query().Get("profileId")
 	if profileID == "" {
@@ -1084,6 +1098,11 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		if violation, dvProfile := h.checkDVPolicyViolation(response, profileID, clientID); violation {
 			http.Error(w, fmt.Sprintf("DV_PROFILE_INCOMPATIBLE: profile %s has no HDR fallback layer", dvProfile), http.StatusBadRequest)
 			return
+		}
+
+		// Cache successful probe results to avoid repeated ffprobe calls
+		if meta != nil {
+			h.setCachedMetadata(cleanPath, &response)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1174,6 +1193,11 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 	if violation, dvProfile := h.checkDVPolicyViolation(response, profileID, clientID); violation {
 		http.Error(w, fmt.Sprintf("DV_PROFILE_INCOMPATIBLE: profile %s has no HDR fallback layer", dvProfile), http.StatusBadRequest)
 		return
+	}
+
+	// Cache successful probe results to avoid repeated ffprobe calls
+	if meta != nil {
+		h.setCachedMetadata(cleanPath, &response)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1876,6 +1900,42 @@ type videoMetadataResponse struct {
 	NeedsAudioTranscode   bool                    `json:"needsAudioTranscode"`
 	SelectedSubtitleIndex int                     `json:"selectedSubtitleIndex"`
 	Notes                 []string                `json:"notes,omitempty"`
+}
+
+// cachedMetadataEntry stores a metadata response with expiration time
+type cachedMetadataEntry struct {
+	response  *videoMetadataResponse
+	expiresAt time.Time
+}
+
+// metadataCacheTTL is the TTL for cached metadata responses (2 hours, same as probe cache)
+const metadataCacheTTL = 2 * time.Hour
+
+// getCachedMetadata retrieves a cached metadata response if available and not expired
+func (h *VideoHandler) getCachedMetadata(path string) *videoMetadataResponse {
+	h.metadataCacheMu.RLock()
+	defer h.metadataCacheMu.RUnlock()
+
+	entry, exists := h.metadataCache[path]
+	if !exists {
+		return nil
+	}
+	if time.Now().After(entry.expiresAt) {
+		return nil // Expired, will be cleaned up later
+	}
+	return entry.response
+}
+
+// setCachedMetadata stores a metadata response in the cache
+func (h *VideoHandler) setCachedMetadata(path string, response *videoMetadataResponse) {
+	h.metadataCacheMu.Lock()
+	defer h.metadataCacheMu.Unlock()
+
+	h.metadataCache[path] = &cachedMetadataEntry{
+		response:  response,
+		expiresAt: time.Now().Add(metadataCacheTTL),
+	}
+	log.Printf("[video] metadata cached for path: %s (expires in %v)", path, metadataCacheTTL)
 }
 
 func (h *VideoHandler) writeCommonHeaders(w http.ResponseWriter) {
