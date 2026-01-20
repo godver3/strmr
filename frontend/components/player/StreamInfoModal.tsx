@@ -285,6 +285,18 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
     withSelectGuard(onClose);
   }, [onClose, withSelectGuard]);
 
+  // Ref for manual scroll control on TV (must be before early return to maintain hooks order)
+  const tvScrollViewRef = useRef<ScrollView>(null);
+
+  // Approximate section height for scroll calculations
+  const APPROX_SECTION_HEIGHT = 120;
+
+  // Handle section focus - scroll to keep focused item in view
+  const handleSectionFocus = useCallback((index: number) => {
+    const scrollOffset = Math.max(0, (index - 1) * APPROX_SECTION_HEIGHT);
+    tvScrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
+  }, []);
+
   if (!visible) {
     return null;
   }
@@ -296,18 +308,6 @@ export const StreamInfoModal: React.FC<StreamInfoModalProps> = ({ visible, info,
       {content}
     </View>
   );
-
-  // Ref for manual scroll control on TV
-  const tvScrollViewRef = useRef<ScrollView>(null);
-
-  // Approximate section height for scroll calculations
-  const APPROX_SECTION_HEIGHT = 120;
-
-  // Handle section focus - scroll to keep focused item in view
-  const handleSectionFocus = useCallback((index: number) => {
-    const scrollOffset = Math.max(0, (index - 1) * APPROX_SECTION_HEIGHT);
-    tvScrollViewRef.current?.scrollTo({ y: scrollOffset, animated: true });
-  }, []);
 
   // Build sections array for TV (focusable) and non-TV (plain)
   const sections: Array<{ key: string; title: string; content: React.ReactNode; show: boolean }> = [

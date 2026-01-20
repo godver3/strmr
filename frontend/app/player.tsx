@@ -4758,7 +4758,7 @@ export default function PlayerScreen() {
           }
         }
 
-        // Skip if we've already fetched metadata for this exact path
+        // Skip if we've already successfully fetched metadata for this exact path
         // This prevents repeated fetches when other dependencies change but the path is the same
         if (lastFetchedMetadataPathRef.current === pathParam) {
           console.log('[player] metadata fetch skipped: already fetched for this path');
@@ -4767,11 +4767,15 @@ export default function PlayerScreen() {
 
         console.log('[player] fetching metadata for', pathParam);
         setSourcePath(pathParam);
-        lastFetchedMetadataPathRef.current = pathParam;
         const metadata = await apiService.getVideoMetadata(pathParam);
         if (!isMounted) {
           return;
         }
+
+        // Only mark as fetched AFTER successful completion and isMounted check
+        // This prevents the race condition where the ref is set before the fetch completes,
+        // then the effect re-runs (setting isMounted=false), and metadata is never processed
+        lastFetchedMetadataPathRef.current = pathParam;
 
         // Extract video color metadata for HDR info display
         if (metadata.videoStreams && metadata.videoStreams.length > 0) {
