@@ -1497,6 +1497,8 @@ export default function PlayerScreen() {
   const seekAttemptCountRef = useRef(0);
   const seekRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasAppliedInitialTracksRef = useRef(false);
+  // Track which path we've already fetched metadata for to prevent repeated fetches
+  const lastFetchedMetadataPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     // IMPORTANT: Skip entire effect during HLS seek transition
@@ -4690,6 +4692,7 @@ export default function PlayerScreen() {
     durationRef.current = 0;
     setDuration(0);
     hasReceivedPlayerLoadRef.current = false;
+    lastFetchedMetadataPathRef.current = null; // Allow metadata fetch for new video
 
     // Use parsedDurationHint if available from HLS session
     if (parsedDurationHint && parsedDurationHint > 0) {
@@ -4755,8 +4758,16 @@ export default function PlayerScreen() {
           }
         }
 
+        // Skip if we've already fetched metadata for this exact path
+        // This prevents repeated fetches when other dependencies change but the path is the same
+        if (lastFetchedMetadataPathRef.current === pathParam) {
+          console.log('[player] metadata fetch skipped: already fetched for this path');
+          return;
+        }
+
         console.log('[player] fetching metadata for', pathParam);
         setSourcePath(pathParam);
+        lastFetchedMetadataPathRef.current = pathParam;
         const metadata = await apiService.getVideoMetadata(pathParam);
         if (!isMounted) {
           return;
@@ -4803,14 +4814,40 @@ export default function PlayerScreen() {
             : undefined;
           const audioChannels =
             primaryAudio?.channelLayout || (primaryAudio?.channels ? `${primaryAudio.channels}ch` : undefined);
+
+          // Calculate video/audio bitrate with fallback to format-level bitrate
+          // FFprobe often doesn't report per-stream bitrates, only the total file bitrate
+          let videoBitrate = primaryVideo.bitRate;
+          let audioBitrate = primaryAudio?.bitRate;
+          const formatBitrate = metadata.formatBitRate || 0;
+
+          if (!videoBitrate && formatBitrate) {
+            // Use format bitrate minus total audio bitrate as an estimate
+            const totalAudioBitrate = metadata.audioStreams?.reduce((sum, a) => sum + (a.bitRate || 0), 0) || 0;
+            videoBitrate = formatBitrate - totalAudioBitrate;
+            // If audio bitrate is also unknown, just use format bitrate (video is the bulk of it)
+            if (videoBitrate <= 0) {
+              videoBitrate = formatBitrate;
+            }
+          }
+
+          // Estimate audio bitrate if video bitrate is known but audio isn't
+          if (!audioBitrate && formatBitrate && videoBitrate) {
+            const estimatedAudio = formatBitrate - videoBitrate;
+            // Only use if it's a reasonable audio bitrate (> 32kbps, < 2Mbps)
+            if (estimatedAudio > 32000 && estimatedAudio < 2000000) {
+              audioBitrate = estimatedAudio;
+            }
+          }
+
           setStreamInfo({
             resolution,
-            videoBitrate: primaryVideo.bitRate,
+            videoBitrate,
             videoCodec: primaryVideo.codecLongName || primaryVideo.codecName,
             frameRate,
             audioCodec: primaryAudio?.codecLongName || primaryAudio?.codecName,
             audioChannels,
-            audioBitrate: primaryAudio?.bitRate,
+            audioBitrate,
           });
         }
 
