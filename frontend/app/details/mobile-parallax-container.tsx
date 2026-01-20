@@ -7,6 +7,7 @@ import React, { memo, useMemo, type ReactNode } from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { Image } from '@/components/Image';
 import { LinearGradient } from 'expo-linear-gradient';
+import { isTablet } from '@/theme/tokens/tvScale';
 import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
@@ -37,7 +38,13 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
   children,
 }: MobileParallaxContainerProps) {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
-  const styles = useMemo(() => createStyles(theme, windowHeight, windowWidth), [theme, windowHeight, windowWidth]);
+  const isLandscape = windowWidth > windowHeight;
+  // Tablets in landscape use backdrop (like TV), otherwise prefer poster
+  const useBackdrop = isTablet && isLandscape;
+  const styles = useMemo(
+    () => createStyles(theme, windowHeight, windowWidth, useBackdrop),
+    [theme, windowHeight, windowWidth, useBackdrop]
+  );
 
   const scrollY = useSharedValue(0);
 
@@ -59,14 +66,19 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
     return { opacity };
   });
 
-  const imageUrl = posterUrl || backdropUrl;
+  // Tablets in landscape use backdrop (like TV), phones/portrait use poster
+  const imageUrl = useBackdrop
+    ? (backdropUrl || posterUrl)
+    : (posterUrl || backdropUrl);
 
   return (
     <View style={styles.container}>
       {/* Fixed background poster/backdrop - persists with parallax */}
       {imageUrl && (
         <Animated.View style={[styles.posterContainer, posterAnimatedStyle]}>
-          <Image source={{ uri: imageUrl }} style={styles.posterImage} contentFit="cover" />
+          <View style={styles.posterImageWrapper}>
+            <Image source={{ uri: imageUrl }} style={styles.posterImage} contentFit="fill" />
+          </View>
           {/* Lower third gradient to darken bottom of poster */}
           <LinearGradient
             colors={['transparent', 'rgba(0, 0, 0, 0.5)', theme.colors.background.base]}
@@ -105,8 +117,10 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
   );
 });
 
-const createStyles = (theme: NovaTheme, windowHeight: number, _windowWidth: number) => {
+const createStyles = (theme: NovaTheme, windowHeight: number, _windowWidth: number, useBackdrop: boolean) => {
   const contentStartOffset = windowHeight * CONTENT_START_PERCENT;
+  // Backdrop is 16:9 landscape, poster is 2:3 portrait
+  const imageAspectRatio = useBackdrop ? 16 / 9 : 2 / 3;
 
   return StyleSheet.create({
     container: {
@@ -120,10 +134,23 @@ const createStyles = (theme: NovaTheme, windowHeight: number, _windowWidth: numb
       right: 0,
       height: windowHeight * 0.75,
       zIndex: 0,
+      overflow: 'hidden',
+    },
+    posterImageWrapper: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
     },
     posterImage: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
       width: '100%',
-      height: '100%',
+      // Backdrop (16:9) or poster (2:3) aspect ratio
+      // This forces the image to size based on width and overflow at the bottom
+      aspectRatio: imageAspectRatio,
     },
     posterBottomGradient: {
       position: 'absolute',

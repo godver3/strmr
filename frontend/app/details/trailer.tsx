@@ -6,6 +6,7 @@
 import type { Trailer } from '@/services/api';
 import type { NovaTheme } from '@/theme';
 import { SpatialNavigationRoot } from '@/services/tv-navigation';
+import { isTablet } from '@/theme/tokens/tvScale';
 import { Ionicons } from '@expo/vector-icons';
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
@@ -274,6 +275,8 @@ export const TrailerModal = ({
           }}
           controls={false}
         />
+        {/* Transparent touch overlay - Video captures touches, so we need this to detect taps */}
+        <Pressable style={styles.touchOverlay} onPress={handleVideoAreaPress} />
         {isBuffering && (
           <View style={styles.bufferingOverlay}>
             <ActivityIndicator size="large" color="#ffffff" />
@@ -293,8 +296,8 @@ export const TrailerModal = ({
             {playerContent}
           </Pressable>
 
-          {/* Fading controls overlay - title and close button */}
-          {!Platform.isTV && (
+          {/* Fading controls overlay - title and close button (mobile + tablet) */}
+          {(!Platform.isTV || isTablet) && (
             <Animated.View
               style={[styles.controlsOverlay, { opacity: controlsOpacity }]}
               pointerEvents={controlsVisible ? 'box-none' : 'none'}>
@@ -360,6 +363,9 @@ const createTrailerStyles = (theme: NovaTheme) =>
     videoPlayer: {
       width: SCREEN_WIDTH,
       height: VIDEO_HEIGHT,
+    },
+    touchOverlay: {
+      ...StyleSheet.absoluteFillObject,
     },
     bufferingOverlay: {
       ...StyleSheet.absoluteFillObject,

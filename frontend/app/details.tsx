@@ -40,7 +40,7 @@ import {
 } from '@/services/api';
 import { SpatialNavigationNode, SpatialNavigationRoot, useSpatialNavigator } from '@/services/tv-navigation';
 import { useTheme } from '@/theme';
-import { getTVScaleMultiplier } from '@/theme/tokens/tvScale';
+import { getTVScaleMultiplier, isTablet } from '@/theme/tokens/tvScale';
 import { getUnplayableReleases } from '@/hooks/useUnplayableReleases';
 import { playbackNavigation } from '@/services/playback-navigation';
 import { findAudioTrackByLanguage, findSubtitleTrackByPreference } from '@/app/details/track-selection';
@@ -274,7 +274,8 @@ export default function DetailsScreen() {
   const shouldAutoPlaySeasonSelection = !isTouchSeasonLayout;
   const shouldUseAdaptiveHeroSizing = isMobile || (isWeb && isWebTouch);
   const isPortraitOrientation = windowHeight >= windowWidth;
-  const shouldAnchorHeroToTop = shouldUseAdaptiveHeroSizing && isPortraitOrientation;
+  // Tablets always anchor hero to top (grow from top down); phones only in portrait
+  const shouldAnchorHeroToTop = isTablet || (shouldUseAdaptiveHeroSizing && isPortraitOrientation);
   // Compute media type early for content box sizing
   const rawMediaTypeForLayout = toStringParam(params.mediaType);
   const mediaTypeForLayout = (rawMediaTypeForLayout || 'movie').toLowerCase();

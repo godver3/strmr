@@ -26,9 +26,9 @@ interface MobileEpisodeCarouselProps {
   theme: NovaTheme;
 }
 
-// Card dimensions
-const CARD_WIDTH = 155;
-const CARD_HEIGHT = 87; // 16:9 aspect ratio
+// Card dimensions (56% larger than original 155x87)
+const CARD_WIDTH = 242;
+const CARD_HEIGHT = 136; // 16:9 aspect ratio
 const CARD_GAP = 12;
 const SEASON_CHIP_GAP = 10;
 const SEASON_CHIP_MIN_WIDTH = 90; // Minimum width for consistent snapping
