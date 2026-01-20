@@ -51,6 +51,8 @@ export interface HlsSessionResponse {
   duration?: number;
   startOffset?: number;
   actualStartOffset?: number;
+  /** Delta between actual keyframe and requested position (negative = keyframe is earlier) */
+  keyframeDelta?: number;
 }
 
 export interface HlsSessionState {
@@ -275,6 +277,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
           duration: response.duration,
           startOffset: sessionStart,
           actualStartOffset: actualSessionStart,
+          keyframeDelta,
         };
 
         setState({
@@ -378,6 +381,7 @@ export function useHlsSession(options: HlsSessionOptions): [HlsSessionState, Hls
               duration: seekResponse.duration,
               startOffset: sessionStart,
               actualStartOffset: actualSessionStart,
+              keyframeDelta,
             };
 
             // Update state with keyframeDelta

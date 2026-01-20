@@ -2366,6 +2366,12 @@ export default function PlayerScreen() {
         currentTimeRef.current = sessionStart;
         setCurrentTime(sessionStart);
 
+        // CRITICAL: Sync keyframeDelta synchronously BEFORE triggering subtitle cache bust
+        // This prevents a race condition where subtitles re-render with stale keyframeDelta
+        if (typeof response.keyframeDelta === 'number') {
+          keyframeDeltaRef.current = response.keyframeDelta;
+        }
+
         // Reset pending seek attempt tracking
         pendingSeekAttemptRef.current.attempts = 0;
         pendingSeekAttemptRef.current.lastAttemptMs = 0;
@@ -2375,8 +2381,10 @@ export default function PlayerScreen() {
         console.log('[player] warmStartHLS offsets set', {
           playbackOffset: playbackOffsetRef.current,
           actualPlaybackOffset: actualPlaybackOffsetRef.current,
+          keyframeDelta: keyframeDeltaRef.current,
           responseStartOffset: response.startOffset,
           responseActualStartOffset: response.actualStartOffset,
+          responseKeyframeDelta: response.keyframeDelta,
           sessionStart,
           actualSessionStart,
           subtitleTimeOffset: -actualPlaybackOffsetRef.current,
