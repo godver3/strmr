@@ -23,7 +23,9 @@ const DEBUG_DISABLE_IMAGES = __DEV__ && false;
 // Enable for TV (limited memory) and Android (emulator/device performance)
 const USE_IMAGE_PROXY = Platform.isTV || isAndroid;
 const IMAGE_PROXY_QUALITY = 80; // JPEG quality
-const IMAGE_PROXY_MAX_WIDTH = 500; // Max width for resized images
+// Dynamic max widths based on image type - backdrops/heroes need higher resolution
+const IMAGE_PROXY_MAX_WIDTH_POSTER = 500; // Posters are displayed smaller
+const IMAGE_PROXY_MAX_WIDTH_BACKDROP = 1280; // Backdrops/heroes need HD quality
 const DEBUG_IMAGE_PROXY = __DEV__ && false; // Log proxy URL conversions
 
 /**
@@ -51,14 +53,17 @@ function getProxyUrl(url: string, targetWidth?: number): string {
 
   // Add target width - use explicit width if available, otherwise default to reasonable size
   // This ensures images are always resized to reduce memory usage
+  // Backdrops (hero images) use /original/ path and need higher resolution
+  const isBackdrop = url.includes('/original/') || url.includes('/w1280/');
+  const maxWidth = isBackdrop ? IMAGE_PROXY_MAX_WIDTH_BACKDROP : IMAGE_PROXY_MAX_WIDTH_POSTER;
+
   let proxyWidth: number;
   if (targetWidth && targetWidth > 0) {
-    // Request 2x size for retina displays, but cap at platform-specific max
-    proxyWidth = Math.min(targetWidth * 2, IMAGE_PROXY_MAX_WIDTH);
+    // Request 2x size for retina displays, but cap at type-specific max
+    proxyWidth = Math.min(targetWidth * 2, maxWidth);
   } else {
-    // Default: smaller for posters, larger for backdrops (but capped)
-    // Check if it's a backdrop (original size) vs poster (w500)
-    proxyWidth = url.includes('/original/') ? IMAGE_PROXY_MAX_WIDTH : Math.min(300, IMAGE_PROXY_MAX_WIDTH);
+    // Default: use type-specific max for backdrops, smaller for posters
+    proxyWidth = isBackdrop ? maxWidth : Math.min(300, maxWidth);
   }
   params.set('w', proxyWidth.toString());
 
