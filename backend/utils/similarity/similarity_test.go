@@ -53,6 +53,18 @@ func TestSimilarity(t *testing.T) {
 			s2:       "The Matrix",
 			minScore: 0.3, // Will be lower due to extra info
 		},
+		{
+			name:     "Ampersand vs and",
+			s1:       "Me, MYSELF & I",
+			s2:       "Me Myself and I",
+			minScore: 1.0, // Should be identical after normalization
+		},
+		{
+			name:     "Ampersand in title",
+			s1:       "Law & Order",
+			s2:       "Law and Order",
+			minScore: 1.0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -81,6 +93,9 @@ func TestNormalize(t *testing.T) {
 		{"The   Matrix", "the matrix"},
 		{"The Matrix 1999", "the matrix 1999"},
 		{"The Matrix (1999)", "the matrix 1999"},
+		{"Law & Order", "law and order"},
+		{"Me, MYSELF & I", "me myself and i"},
+		{"Rock & Roll", "rock and roll"},
 	}
 
 	for _, tt := range tests {

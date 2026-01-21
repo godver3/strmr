@@ -70,8 +70,12 @@ func suffixContainmentScore(s1, s2 string) float64 {
 }
 
 // normalize converts a string to lowercase and removes non-alphanumeric characters
-// (except spaces) to make title comparison more forgiving
+// (except spaces) to make title comparison more forgiving.
+// Also converts "&" to "and" for equivalence (e.g., "Me & You" matches "Me and You").
 func normalize(s string) string {
+	// Replace "&" with " and " before other processing
+	s = strings.ReplaceAll(s, "&", " and ")
+
 	var result strings.Builder
 	result.Grow(len(s))
 
