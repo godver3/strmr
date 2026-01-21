@@ -62,6 +62,59 @@ export const episodesMatch = (a?: any, b?: any) => {
 export const getResultKey = (result: any) =>
   result.guid || result.downloadUrl || result.link || `${result.indexer}:${result.title}`;
 
+/**
+ * Check if an episode hasn't aired yet based on its air date.
+ * Returns true if:
+ * - The episode has no air date (assumed unreleased)
+ * - The episode's air date is in the future
+ */
+export const isEpisodeUnreleased = (airedDate?: string): boolean => {
+  if (!airedDate) {
+    return true;
+  }
+
+  try {
+    // Parse the date string (format: YYYY-MM-DD)
+    const airDate = new Date(airedDate + 'T00:00:00');
+    if (isNaN(airDate.getTime())) {
+      return true; // Invalid date, assume unreleased
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Compare dates only, not times
+
+    return airDate > today;
+  } catch {
+    return true; // Error parsing, assume unreleased
+  }
+};
+
+/**
+ * Format a user-friendly message for unreleased episodes when no search results are found.
+ */
+export const formatUnreleasedMessage = (episodeLabel: string, airedDate?: string): string => {
+  if (!airedDate) {
+    return `${episodeLabel} hasn't aired yet. No early results found.`;
+  }
+
+  try {
+    const airDate = new Date(airedDate + 'T00:00:00');
+    if (isNaN(airDate.getTime())) {
+      return `${episodeLabel} hasn't aired yet. No early results found.`;
+    }
+
+    const formatted = airDate.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+
+    return `${episodeLabel} hasn't aired yet. No early results found. Airs ${formatted}.`;
+  } catch {
+    return `${episodeLabel} hasn't aired yet. No early results found.`;
+  }
+};
+
 export const toStringParam = (value: unknown): string => {
   if (Array.isArray(value)) {
     return value[0] ?? '';

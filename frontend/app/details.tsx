@@ -81,7 +81,7 @@ import { SeriesEpisodes } from './details/series-episodes';
 import { TrailerModal } from './details/trailer';
 import { SeasonSelector } from './details/season-selector';
 import { EpisodeSelector } from './details/episode-selector';
-import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, padNumber, toStringParam } from './details/utils';
+import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, formatUnreleasedMessage, isEpisodeUnreleased, padNumber, toStringParam } from './details/utils';
 import MobileParallaxContainer from './details/mobile-parallax-container';
 import MobileEpisodeCarousel from './details/mobile-episode-carousel';
 import CastSection from '@/components/CastSection';
@@ -2480,7 +2480,7 @@ export default function DetailsScreen() {
       limit?: number;
       selectionMessage?: string | null;
       useDebugPlayer?: boolean;
-      targetEpisode?: { seasonNumber: number; episodeNumber: number };
+      targetEpisode?: { seasonNumber: number; episodeNumber: number; airedDate?: string };
     }) => {
       if (isResolving) {
         return;
@@ -2678,7 +2678,12 @@ export default function DetailsScreen() {
         }
         const results = await fetchIndexerResults({ query: trimmedQuery, limit });
         if (!results || results.length === 0) {
-          setSelectionError(`No results returned for ${friendlyLabel}.`);
+          // Check if episode hasn't aired yet and show a friendlier message
+          if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
+            setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
+          } else {
+            setSelectionError(`No results returned for ${friendlyLabel}.`);
+          }
           return;
         }
 
@@ -2898,10 +2903,15 @@ export default function DetailsScreen() {
               }
 
               console.log(`🛑 All ${prioritizedResults.length} candidates failed health checks. Stopping.`);
-              const failureSummary = lastHealthFailureReason
-                ? `All automatic releases failed health checks (last issue: ${lastHealthFailureReason}). Try manual selection or pick another release.`
-                : 'All automatic releases failed health checks. Try manual selection or pick another release.';
-              setSelectionError(failureSummary);
+              // Check if episode hasn't aired yet and show a friendlier message
+              if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
+                setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
+              } else {
+                const failureSummary = lastHealthFailureReason
+                  ? `All automatic releases failed health checks (last issue: ${lastHealthFailureReason}). Try manual selection or pick another release.`
+                  : 'All automatic releases failed health checks. Try manual selection or pick another release.';
+                setSelectionError(failureSummary);
+              }
               setSelectionInfo(null);
               return;
             }
@@ -2913,7 +2923,10 @@ export default function DetailsScreen() {
           }
         }
 
-        if (lastHealthFailure) {
+        // Check if episode hasn't aired yet and show a friendlier message
+        if (targetEpisode?.airedDate && isEpisodeUnreleased(targetEpisode.airedDate)) {
+          setSelectionError(formatUnreleasedMessage(friendlyLabel, targetEpisode.airedDate));
+        } else if (lastHealthFailure) {
           const failureSummary = lastHealthFailureReason
             ? `All automatic releases failed health checks (last issue: ${lastHealthFailureReason}). Try manual selection or pick another release.`
             : 'All automatic releases failed health checks. Try manual selection or pick another release.';
@@ -3172,7 +3185,7 @@ export default function DetailsScreen() {
           friendlyLabel,
           limit: 50,
           selectionMessage,
-          targetEpisode: { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber },
+          targetEpisode: { seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber, airedDate: episode.airedDate },
         });
       };
 
@@ -3379,6 +3392,7 @@ export default function DetailsScreen() {
           friendlyLabel: context.friendlyLabel,
           limit: 50,
           selectionMessage: context.selectionMessage,
+          targetEpisode: { seasonNumber: episodeToPlay.seasonNumber, episodeNumber: episodeToPlay.episodeNumber, airedDate: episodeToPlay.airedDate },
         });
         // Don't automatically record episode playback - let progress tracking handle it
         // recordEpisodePlayback(episodeToPlay);
@@ -3426,6 +3440,7 @@ export default function DetailsScreen() {
           limit: 50,
           selectionMessage: context.selectionMessage,
           useDebugPlayer: true,
+          targetEpisode: { seasonNumber: episodeToPlay.seasonNumber, episodeNumber: episodeToPlay.episodeNumber, airedDate: episodeToPlay.airedDate },
         });
         return;
       }
@@ -3689,7 +3704,15 @@ export default function DetailsScreen() {
       const results = await fetchIndexerResults({ limit: 50, query: context?.query });
       setManualResults(results);
       if (!results || results.length === 0) {
-        setManualError('No results available yet for manual selection.');
+        // Check if episode hasn't aired yet and show a friendlier message
+        if (episodeToSelect && isEpisodeUnreleased(episodeToSelect.airedDate)) {
+          const baseTitle = title.trim() || title;
+          const episodeCode = `S${padNumber(episodeToSelect.seasonNumber)}E${padNumber(episodeToSelect.episodeNumber)}`;
+          const episodeLabel = `${baseTitle} ${episodeCode}`;
+          setManualError(formatUnreleasedMessage(episodeLabel, episodeToSelect.airedDate));
+        } else {
+          setManualError('No results available yet for manual selection.');
+        }
       }
     } catch (err) {
       // Check for timeout errors and show a helpful message
@@ -3704,7 +3727,7 @@ export default function DetailsScreen() {
     } finally {
       setManualLoading(false);
     }
-  }, [activeEpisode, nextUpEpisode, fetchIndexerResults, getEpisodeSearchContext, manualLoading]);
+  }, [activeEpisode, nextUpEpisode, fetchIndexerResults, getEpisodeSearchContext, manualLoading, title]);
 
   const handleEpisodeLongPress = useCallback(
     async (episode: SeriesEpisode) => {
@@ -3737,7 +3760,15 @@ export default function DetailsScreen() {
         const results = await fetchIndexerResults({ limit: 50, query: context.query });
         setManualResults(results);
         if (!results || results.length === 0) {
-          setManualError('No results available yet for manual selection.');
+          // Check if episode hasn't aired yet and show a friendlier message
+          if (isEpisodeUnreleased(episode.airedDate)) {
+            const baseTitle = title.trim() || title;
+            const episodeCode = `S${padNumber(episode.seasonNumber)}E${padNumber(episode.episodeNumber)}`;
+            const episodeLabel = `${baseTitle} ${episodeCode}`;
+            setManualError(formatUnreleasedMessage(episodeLabel, episode.airedDate));
+          } else {
+            setManualError('No results available yet for manual selection.');
+          }
         }
       } catch (err) {
         // Check for timeout errors and show a helpful message
@@ -3753,7 +3784,7 @@ export default function DetailsScreen() {
         setManualLoading(false);
       }
     },
-    [fetchIndexerResults, getEpisodeSearchContext, manualLoading],
+    [fetchIndexerResults, getEpisodeSearchContext, manualLoading, title],
   );
 
   const { healthChecks: manualHealthChecks, checkHealth: checkManualHealth } = useManualHealthChecks(manualResults);
