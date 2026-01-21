@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Platform, StyleSheet, Text, View } from 'react-native';
 
 // Lazy load expo-updates to avoid crash on builds without the native module
 const getUpdates = (): typeof import('expo-updates') | null => {
@@ -27,6 +27,8 @@ interface UpdateCheckerProps {
 export function UpdateChecker({ children, timeout = 5000, simulate = false }: UpdateCheckerProps) {
   const [updateState, setUpdateState] = useState<UpdateState>('checking');
   const [progress, setProgress] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [toastOpacity] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     // Simulation mode for testing the UI flow in development
@@ -116,11 +118,28 @@ export function UpdateChecker({ children, timeout = 5000, simulate = false }: Up
         if (cancelled) return;
 
         console.log('[Updates] Error checking for updates:', error);
-        // On error, proceed with current version
+        // On error, show toast notification then proceed with current version
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
-        setUpdateState('none');
+
+        // Determine user-friendly error message
+        const isNetworkError =
+          error instanceof Error &&
+          (error.message.includes('network') ||
+            error.message.includes('Network') ||
+            error.message.includes('fetch') ||
+            error.message.includes('timeout') ||
+            error.message.includes('ETIMEDOUT') ||
+            error.message.includes('ECONNREFUSED') ||
+            error.message.includes('ENOTFOUND'));
+
+        setErrorMessage(
+          isNetworkError
+            ? 'Unable to check for updates - server unreachable'
+            : 'Unable to check for updates',
+        );
+        setUpdateState('error');
       }
     };
 
@@ -134,6 +153,31 @@ export function UpdateChecker({ children, timeout = 5000, simulate = false }: Up
     };
   }, [timeout, simulate]);
 
+  // Handle error state: show toast, wait, then proceed to app
+  useEffect(() => {
+    if (updateState !== 'error') return;
+
+    // Fade in the toast
+    Animated.timing(toastOpacity, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+
+    // After 8 seconds, fade out and proceed
+    const timer = setTimeout(() => {
+      Animated.timing(toastOpacity, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start(() => {
+        setUpdateState('none');
+      });
+    }, 8000);
+
+    return () => clearTimeout(timer);
+  }, [updateState, toastOpacity]);
+
   // Show updating splash screen while checking/downloading
   if (updateState === 'checking' || updateState === 'downloading' || updateState === 'ready') {
     return (
@@ -144,6 +188,21 @@ export function UpdateChecker({ children, timeout = 5000, simulate = false }: Up
           <Text style={styles.progress}>{progress}</Text>
         </View>
       </View>
+    );
+  }
+
+  // Error state: show children with toast overlay
+  if (updateState === 'error') {
+    return (
+      <>
+        {children}
+        <Animated.View style={[styles.toastContainer, { opacity: toastOpacity }]} pointerEvents="none">
+          <View style={styles.toast}>
+            <View style={styles.toastIndicator} />
+            <Text style={styles.toastMessage}>{errorMessage}</Text>
+          </View>
+        </Animated.View>
+      </>
     );
   }
 
@@ -176,5 +235,43 @@ const styles = StyleSheet.create({
     fontSize: Platform.isTV ? 18 : 14,
     color: '#888888',
     textAlign: 'center',
+  },
+  // Toast styles for error notifications
+  toastContainer: {
+    position: 'absolute',
+    top: Platform.isTV ? 48 : 60,
+    left: Platform.isTV ? 48 : 16,
+    right: Platform.isTV ? 48 : 16,
+    zIndex: 1000,
+    alignItems: 'center',
+  },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1c1c1e',
+    borderWidth: 1,
+    borderColor: '#ff6b6b',
+    borderRadius: Platform.isTV ? 16 : 12,
+    paddingVertical: Platform.isTV ? 16 : 12,
+    paddingHorizontal: Platform.isTV ? 20 : 16,
+    maxWidth: Platform.isTV ? 600 : '100%',
+    shadowColor: '#ff6b6b',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  toastIndicator: {
+    width: Platform.isTV ? 6 : 4,
+    alignSelf: 'stretch',
+    backgroundColor: '#ff6b6b',
+    borderRadius: 4,
+    marginRight: Platform.isTV ? 16 : 12,
+  },
+  toastMessage: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: Platform.isTV ? 20 : 15,
+    fontWeight: '500',
   },
 });
