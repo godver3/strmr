@@ -74,7 +74,19 @@ Download the latest APK: [Releases](https://github.com/godver3/strmr/releases)
 
 ## Configuration
 
-Access the admin panel at `http://localhost:7777/admin` to configure all settings. Required settings are indicated in the web UI settings page.
+Access the admin panel at `http://localhost:7777/admin` to configure all settings.
+
+### Required API Keys
+
+strmr requires API keys from TMDB and TVDB for metadata (posters, descriptions, cast info, etc.):
+
+| Service | Required | Purpose | Get Your Key |
+|---------|----------|---------|--------------|
+| **TMDB** | ✅ Yes | Movie/TV metadata, posters, cast | [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) (free account) |
+| **TVDB** | ✅ Yes | TV show metadata, episode info | [thetvdb.com/api-information](https://thetvdb.com/api-information) (free account) |
+| **MDBList** | ❌ Optional | Ratings from multiple sources (IMDb, RT, etc.) | [mdblist.com/preferences](https://mdblist.com/preferences/) (free account) |
+
+Enter these keys in the admin panel under **Settings → Metadata**.
 
 ## Roadmap
 
