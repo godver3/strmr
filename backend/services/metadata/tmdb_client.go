@@ -1288,9 +1288,115 @@ func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID in
 		return nil, fmt.Errorf("tmdb person combined_credits for %d failed: %w", personID, err)
 	}
 
+	// Deduplicate credits by show/movie ID - TMDB returns separate entries for different roles
+	// in the same production (e.g., multiple characters in American Dad, different SNL appearances)
+	type creditKey struct {
+		ID        int64
+		MediaType string
+	}
+	creditMap := make(map[creditKey]struct {
+		ID               int64
+		Title            string
+		Name             string
+		Overview         string
+		PosterPath       string
+		BackdropPath     string
+		MediaType        string
+		ReleaseDate      string
+		FirstAirDate     string
+		Popularity       float64
+		VoteAverage      float64
+		Character        string
+		OriginalLanguage string
+		Order            int
+		EpisodeCount     int
+		GenreIDs         []int
+	})
+
+	for _, credit := range payload.Cast {
+		key := creditKey{ID: credit.ID, MediaType: credit.MediaType}
+		if existing, ok := creditMap[key]; ok {
+			// Merge: keep best order (lowest), sum episode counts, keep highest popularity
+			if credit.Order < existing.Order {
+				existing.Order = credit.Order
+			}
+			// Sum episode counts (different roles may have different episode appearances)
+			existing.EpisodeCount += credit.EpisodeCount
+			// Keep highest popularity
+			if credit.Popularity > existing.Popularity {
+				existing.Popularity = credit.Popularity
+			}
+			// Keep highest vote average
+			if credit.VoteAverage > existing.VoteAverage {
+				existing.VoteAverage = credit.VoteAverage
+			}
+			creditMap[key] = existing
+		} else {
+			creditMap[key] = struct {
+				ID               int64
+				Title            string
+				Name             string
+				Overview         string
+				PosterPath       string
+				BackdropPath     string
+				MediaType        string
+				ReleaseDate      string
+				FirstAirDate     string
+				Popularity       float64
+				VoteAverage      float64
+				Character        string
+				OriginalLanguage string
+				Order            int
+				EpisodeCount     int
+				GenreIDs         []int
+			}{
+				ID:               credit.ID,
+				Title:            credit.Title,
+				Name:             credit.Name,
+				Overview:         credit.Overview,
+				PosterPath:       credit.PosterPath,
+				BackdropPath:     credit.BackdropPath,
+				MediaType:        credit.MediaType,
+				ReleaseDate:      credit.ReleaseDate,
+				FirstAirDate:     credit.FirstAirDate,
+				Popularity:       credit.Popularity,
+				VoteAverage:      credit.VoteAverage,
+				Character:        credit.Character,
+				OriginalLanguage: credit.OriginalLanguage,
+				Order:            credit.Order,
+				EpisodeCount:     credit.EpisodeCount,
+				GenreIDs:         credit.GenreIDs,
+			}
+		}
+	}
+
+	// Convert map back to slice for processing
+	deduplicatedCast := make([]struct {
+		ID               int64
+		Title            string
+		Name             string
+		Overview         string
+		PosterPath       string
+		BackdropPath     string
+		MediaType        string
+		ReleaseDate      string
+		FirstAirDate     string
+		Popularity       float64
+		VoteAverage      float64
+		Character        string
+		OriginalLanguage string
+		Order            int
+		EpisodeCount     int
+		GenreIDs         []int
+	}, 0, len(creditMap))
+	for _, credit := range creditMap {
+		deduplicatedCast = append(deduplicatedCast, credit)
+	}
+	log.Printf("[metadata] person credits deduplicated: %d -> %d entries", len(payload.Cast), len(deduplicatedCast))
+
 	// Collect TV show IDs to fetch total episode counts
 	tvShowIDs := make(map[int64]bool)
-	for _, credit := range payload.Cast {
+	for _, credit := range deduplicatedCast {
 		if credit.MediaType == "tv" {
 			tvShowIDs[credit.ID] = true
 		}
@@ -1317,8 +1423,8 @@ func (c *tmdbClient) fetchPersonCombinedCredits(ctx context.Context, personID in
 	}
 
 	// Convert to Title slice and calculate role importance score
-	titles := make([]models.Title, 0, len(payload.Cast))
-	for _, credit := range payload.Cast {
+	titles := make([]models.Title, 0, len(deduplicatedCast))
+	for _, credit := range deduplicatedCast {
 		// Skip talk shows (genre 10767) - these are typically interview appearances, not acting roles
 		isTalkShow := false
 		for _, gid := range credit.GenreIDs {

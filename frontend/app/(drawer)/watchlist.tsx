@@ -1,7 +1,7 @@
 import { useBackendSettings } from '@/components/BackendSettingsContext';
 import { useContinueWatching } from '@/components/ContinueWatchingContext';
 import { FixedSafeAreaView } from '@/components/FixedSafeAreaView';
-import MediaGrid from '@/components/MediaGrid';
+import MediaGrid, { type MediaGridHandle } from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
@@ -181,6 +181,9 @@ export default function WatchlistScreen() {
   const { isOpen: isMenuOpen, openMenu } = useMenuContext();
   const isFocused = useIsFocused();
   const isActive = isFocused && !isMenuOpen && !pendingPinUserId;
+
+  // Ref for MediaGrid to control scrolling from header
+  const mediaGridRef = useRef<MediaGridHandle>(null);
 
   // Handle left navigation at edge to open menu
   const onDirectionHandledWithoutMovement = useCallback(
@@ -833,16 +836,22 @@ export default function WatchlistScreen() {
   const personHeaderComponent = useMemo(() => {
     if (!isPersonMode || !personDetails) return null;
 
-    // TV sort button icon size scaled up 1.5x
-    const sortIconSize = Platform.isTV ? 27 : 18;
+    // TV sort button icon size - scaled for platform (1.5x tvOS, ~1.05x Android TV)
+    const isNonTvosTV = Platform.isTV && Platform.OS !== 'ios';
+    const atvScale = isNonTvosTV ? 0.7 : 1;
+    const sortIconSize = Platform.isTV ? Math.round(27 * atvScale) : 18;
 
     // Bio content - wrap in SpatialNavigationFocusableView on TV for D-pad navigation
+    // Android TV gets more lines since line height is smaller (and user wants it taller)
+    const bioNumberOfLines = Platform.isTV ? (isNonTvosTV ? 10 : 5) : 5;
     const bioContent = personDetails.person.biography ? (
       Platform.isTV ? (
-        <SpatialNavigationFocusableView onSelect={() => setBioModalVisible(true)}>
+        <SpatialNavigationFocusableView
+          onSelect={() => setBioModalVisible(true)}
+          onFocus={() => mediaGridRef.current?.scrollToTop()}>
           {({ isFocused }: { isFocused: boolean }) => (
             <View style={[styles.bioPressable, isFocused && styles.bioPressableFocused]}>
-              <Text style={styles.personBioTop} numberOfLines={5}>
+              <Text style={styles.personBioTop} numberOfLines={bioNumberOfLines}>
                 {personDetails.person.biography}
               </Text>
               <Text style={styles.bioReadMore}>Select to read more</Text>
@@ -851,7 +860,7 @@ export default function WatchlistScreen() {
         </SpatialNavigationFocusableView>
       ) : (
         <Pressable onPress={() => setBioModalVisible(true)}>
-          <Text style={styles.personBioTop} numberOfLines={5}>
+          <Text style={styles.personBioTop} numberOfLines={bioNumberOfLines}>
             {personDetails.person.biography}
           </Text>
           <Text style={styles.bioReadMore}>Tap to read more</Text>
@@ -868,7 +877,9 @@ export default function WatchlistScreen() {
       const isActive = filmographySort === sortType;
       if (Platform.isTV) {
         return (
-          <SpatialNavigationFocusableView onSelect={() => setFilmographySort(sortType)}>
+          <SpatialNavigationFocusableView
+            onSelect={() => setFilmographySort(sortType)}
+            onFocus={() => mediaGridRef.current?.scrollToTop()}>
             {({ isFocused }: { isFocused: boolean }) => (
               <View
                 style={[
@@ -910,39 +921,53 @@ export default function WatchlistScreen() {
       );
     };
 
-    const headerContent = (
-      <View style={styles.personHeader}>
-        <View style={styles.personTopRow}>
-          {personDetails.person.profileUrl && (
-            <Image
-              source={{ uri: personDetails.person.profileUrl }}
-              style={styles.personPhoto}
-              resizeMode="cover"
-            />
+    // Bio row content
+    const bioRow = (
+      <View style={styles.personTopRow}>
+        {personDetails.person.profileUrl && (
+          <Image
+            source={{ uri: personDetails.person.profileUrl }}
+            style={styles.personPhoto}
+            resizeMode="cover"
+          />
+        )}
+        <View style={styles.personBioWrap}>
+          {personDetails.person.knownFor && (
+            <Text style={styles.personRole}>{personDetails.person.knownFor}</Text>
           )}
-          <View style={styles.personBioWrap}>
-            {personDetails.person.knownFor && (
-              <Text style={styles.personRole}>{personDetails.person.knownFor}</Text>
-            )}
-            {bioContent}
-          </View>
-        </View>
-        {/* Sort toggle for filmography */}
-        <View style={styles.sortToggleRow}>
-          <Text style={styles.sortLabel}>Sort by:</Text>
-          <View style={styles.sortButtons}>
-            {renderSortButton('popular', 'flame', 'Popular')}
-            {renderSortButton('chronological', 'calendar', 'Year')}
-          </View>
+          {bioContent}
         </View>
       </View>
     );
 
-    // Wrap in SpatialNavigationNode on TV for proper navigation ordering
+    // Sort buttons row content
+    const sortRow = (
+      <View style={styles.sortToggleRow}>
+        <Text style={styles.sortLabel}>Sort by:</Text>
+        <View style={styles.sortButtons}>
+          {renderSortButton('popular', 'flame', 'Popular')}
+          {renderSortButton('chronological', 'calendar', 'Year')}
+        </View>
+      </View>
+    );
+
+    // On TV, wrap each row in horizontal navigation node for proper left/right navigation.
+    // Don't wrap in outer vertical node - let the horizontal nodes be direct children of
+    // MediaGrid's vertical node so navigation UP from grid goes to sort buttons (not bio).
     return Platform.isTV ? (
-      <SpatialNavigationNode orientation="horizontal">{headerContent}</SpatialNavigationNode>
+      <View style={styles.personHeader}>
+        <SpatialNavigationNode orientation="horizontal">
+          {bioRow}
+        </SpatialNavigationNode>
+        <SpatialNavigationNode orientation="horizontal">
+          {sortRow}
+        </SpatialNavigationNode>
+      </View>
     ) : (
-      headerContent
+      <View style={styles.personHeader}>
+        {bioRow}
+        {sortRow}
+      </View>
     );
   }, [isPersonMode, personDetails, styles, filmographySort, theme.colors]);
 
@@ -995,7 +1020,7 @@ export default function WatchlistScreen() {
   }, [isLandscape]);
 
   return (
-    <SpatialNavigationRoot isActive={isActive} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
+    <SpatialNavigationRoot isActive={isActive && !bioModalVisible} onDirectionHandledWithoutMovement={onDirectionHandledWithoutMovement}>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
@@ -1029,6 +1054,7 @@ export default function WatchlistScreen() {
 
             {/* Grid content - hide title in collection/person mode since page title already shows it */}
             <MediaGrid
+              ref={mediaGridRef}
               title={isCollectionMode || isPersonMode ? '' : pageTitle}
               items={filteredTitles}
               loading={loading}
@@ -1044,6 +1070,7 @@ export default function WatchlistScreen() {
               loadingMore={exploreLoadingMore}
               hasMoreItems={hasMoreItems}
               ListHeaderComponent={personHeaderComponent}
+              listKey={isPersonMode ? filmographySort : undefined}
             />
           </SpatialNavigationNode>
         </View>
@@ -1061,15 +1088,20 @@ export default function WatchlistScreen() {
               <View style={styles.modalContent}>
                 {Platform.isTV ? (
                   <SpatialNavigationFocusableView onSelect={() => setBioModalVisible(false)}>
-                    {({ isFocused }: { isFocused: boolean }) => (
-                      <View style={[styles.modalCloseButton, isFocused && styles.modalCloseButtonFocused]}>
-                        <Ionicons
-                          name="close-circle"
-                          size={48}
-                          color={isFocused ? theme.colors.accent.primary : theme.colors.text.secondary}
-                        />
-                      </View>
-                    )}
+                    {({ isFocused }: { isFocused: boolean }) => {
+                      // Reduce close button size on Android TV
+                      const isAndroidTV = Platform.OS === 'android';
+                      const closeIconSize = isAndroidTV ? 24 : 48;
+                      return (
+                        <View style={[styles.modalCloseButton, isFocused && styles.modalCloseButtonFocused]}>
+                          <Ionicons
+                            name="close-circle"
+                            size={closeIconSize}
+                            color={isFocused ? theme.colors.accent.primary : theme.colors.text.secondary}
+                          />
+                        </View>
+                      );
+                    }}
                   </SpatialNavigationFocusableView>
                 ) : (
                   <Pressable style={styles.modalCloseButton} onPress={() => setBioModalVisible(false)}>
@@ -1092,8 +1124,15 @@ export default function WatchlistScreen() {
   );
 }
 
-const createStyles = (theme: NovaTheme) =>
-  StyleSheet.create({
+const createStyles = (theme: NovaTheme) => {
+  // Non-tvOS TV platforms (Android TV, Fire TV, etc.) need smaller scaling
+  const isNonTvosTV = Platform.isTV && Platform.OS !== 'ios';
+  // Scale factor for non-tvOS TV - reduce sizes by 30% compared to tvOS
+  const atvScale = isNonTvosTV ? 0.7 : 1;
+  // TV scale multiplier (1.5x for tvOS, ~1.05x for Android TV)
+  const tvScale = Platform.isTV ? 1.5 * atvScale : 1;
+
+  return StyleSheet.create({
     safeArea: {
       flex: 1,
       backgroundColor: Platform.isTV ? 'transparent' : theme.colors.background.base,
@@ -1133,6 +1172,8 @@ const createStyles = (theme: NovaTheme) =>
     personBioWrap: {
       flex: 1,
       paddingTop: Platform.isTV ? theme.spacing.xs * 1.5 : theme.spacing.xs,
+      // Add right padding on Android TV to prevent text going off screen edge
+      paddingRight: isNonTvosTV ? theme.spacing.xl : 0,
     },
     personRole: {
       ...theme.typography.label.md,
@@ -1156,7 +1197,7 @@ const createStyles = (theme: NovaTheme) =>
       ...theme.typography.body.sm,
       fontSize: Platform.isTV ? theme.typography.body.sm.fontSize * 1.5 : theme.typography.body.sm.fontSize,
       color: theme.colors.text.secondary,
-      lineHeight: Platform.isTV ? 33 : 22,
+      lineHeight: Math.round(22 * tvScale),
     },
     bioReadMore: {
       ...theme.typography.label.md,
@@ -1167,31 +1208,31 @@ const createStyles = (theme: NovaTheme) =>
     sortToggleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: Platform.isTV ? theme.spacing.lg * 1.5 : theme.spacing.lg,
-      paddingTop: Platform.isTV ? theme.spacing.md * 1.5 : theme.spacing.md,
+      marginTop: Platform.isTV ? theme.spacing.lg * tvScale : theme.spacing.lg,
+      paddingTop: Platform.isTV ? theme.spacing.md * tvScale : theme.spacing.md,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: theme.colors.border.subtle,
     },
     sortLabel: {
       ...theme.typography.label.md,
-      fontSize: Platform.isTV ? theme.typography.label.md.fontSize * 1.5 : theme.typography.label.md.fontSize,
-      lineHeight: Platform.isTV ? theme.typography.label.md.lineHeight * 1.5 : theme.typography.label.md.lineHeight,
+      fontSize: theme.typography.label.md.fontSize * tvScale,
+      lineHeight: theme.typography.label.md.lineHeight * tvScale,
       color: theme.colors.text.muted,
-      marginRight: Platform.isTV ? theme.spacing.md * 1.5 : theme.spacing.md,
+      marginRight: Platform.isTV ? theme.spacing.md * tvScale : theme.spacing.md,
     },
     sortButtons: {
       flexDirection: 'row',
-      gap: Platform.isTV ? theme.spacing.md : theme.spacing.sm,
+      gap: Platform.isTV ? theme.spacing.md * atvScale : theme.spacing.sm,
     },
     sortButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: Platform.isTV ? theme.spacing.sm : theme.spacing.xs,
-      paddingVertical: Platform.isTV ? theme.spacing.md : theme.spacing.xs,
-      paddingHorizontal: Platform.isTV ? theme.spacing.lg : theme.spacing.sm,
-      borderRadius: Platform.isTV ? theme.radius.md : theme.radius.sm,
+      gap: Platform.isTV ? theme.spacing.sm * atvScale : theme.spacing.xs,
+      paddingVertical: Platform.isTV ? theme.spacing.md * atvScale : theme.spacing.xs,
+      paddingHorizontal: Platform.isTV ? theme.spacing.lg * atvScale : theme.spacing.sm,
+      borderRadius: Platform.isTV ? theme.radius.md * atvScale : theme.radius.sm,
       backgroundColor: theme.colors.background.surface,
-      borderWidth: Platform.isTV ? 3 : 2,
+      borderWidth: Platform.isTV ? Math.round(3 * atvScale) : 2,
       borderColor: 'transparent',
     },
     sortButtonActive: {
@@ -1203,8 +1244,8 @@ const createStyles = (theme: NovaTheme) =>
     },
     sortButtonText: {
       ...theme.typography.label.md,
-      fontSize: Platform.isTV ? theme.typography.label.md.fontSize * 1.5 : theme.typography.label.md.fontSize,
-      lineHeight: Platform.isTV ? theme.typography.label.md.lineHeight * 1.5 : theme.typography.label.md.lineHeight,
+      fontSize: theme.typography.label.md.fontSize * tvScale,
+      lineHeight: theme.typography.label.md.lineHeight * tvScale,
       color: theme.colors.text.muted,
     },
     sortButtonTextActive: {
@@ -1229,13 +1270,14 @@ const createStyles = (theme: NovaTheme) =>
     },
     modalCloseButton: {
       position: 'absolute',
-      top: Platform.isTV ? theme.spacing.lg : theme.spacing.sm,
-      right: Platform.isTV ? theme.spacing.lg : theme.spacing.sm,
+      // Android TV: shift up and right (smaller values)
+      top: Platform.isTV ? (isNonTvosTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.sm,
+      right: Platform.isTV ? (isNonTvosTV ? theme.spacing.sm : theme.spacing.lg) : theme.spacing.sm,
       zIndex: 10,
-      padding: Platform.isTV ? theme.spacing.md : theme.spacing.xs,
+      padding: Platform.isTV ? (isNonTvosTV ? theme.spacing.xs : theme.spacing.md) : theme.spacing.xs,
       backgroundColor: theme.colors.background.elevated,
-      borderRadius: Platform.isTV ? 30 : 20,
-      borderWidth: Platform.isTV ? 3 : 2,
+      borderRadius: Platform.isTV ? (isNonTvosTV ? 15 : 30) : 20,
+      borderWidth: Platform.isTV ? (isNonTvosTV ? 2 : 3) : 2,
       borderColor: 'transparent',
     },
     modalCloseButtonFocused: {
@@ -1251,6 +1293,7 @@ const createStyles = (theme: NovaTheme) =>
       ...theme.typography.body.md,
       fontSize: Platform.isTV ? theme.typography.body.md.fontSize * 1.5 : theme.typography.body.md.fontSize,
       color: theme.colors.text.primary,
-      lineHeight: Platform.isTV ? 39 : 26,
+      lineHeight: Math.round(26 * tvScale),
     },
   });
+};

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useRef, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 
 import {
   ActivityIndicator,
@@ -35,6 +35,11 @@ interface MediaGridHandlers {
 }
 const MediaGridHandlersContext = React.createContext<MediaGridHandlers | null>(null);
 
+// Imperative handle for MediaGrid - allows parent to control scrolling
+export interface MediaGridHandle {
+  scrollToTop: () => void;
+}
+
 interface MediaGridProps {
   title: string;
   items: DisplayTitle[];
@@ -57,6 +62,7 @@ interface MediaGridProps {
   hasMoreItems?: boolean; // Whether there are more items to load
   onItemFocus?: (index: number) => void; // Called when an item receives focus (TV) - index is the item's position in the list
   ListHeaderComponent?: React.ReactElement | null; // Component to render above the list (scrolls with content)
+  listKey?: string; // Key suffix to force spatial navigation recalculation when list order changes
 }
 
 // Static styles for MinimalCard - avoids object creation per render
@@ -368,8 +374,7 @@ const createStyles = (theme: NovaTheme, screenWidth?: number, parentPadding: num
   });
 };
 
-const MediaGrid = React.memo(
-  function MediaGrid({
+const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid({
     title,
     items,
     loading = false,
@@ -391,7 +396,8 @@ const MediaGrid = React.memo(
     hasMoreItems = false,
     onItemFocus,
     ListHeaderComponent,
-  }: MediaGridProps) {
+    listKey,
+  }, ref) {
     const theme = useTheme();
     const { width: screenWidth, height: screenHeight } = useTVDimensions();
     const isCompact = theme.breakpoint === 'compact';
@@ -412,6 +418,15 @@ const MediaGrid = React.memo(
     // tvOS scrolling helpers (row-based), mirrors Search/Live screen approach
     const rowRefs = useRef<{ [key: string]: View | null }>({});
     const mainScrollViewRef = useRef<any>(null);
+
+    // Expose scrollToTop to parent via imperative handle
+    useImperativeHandle(ref, () => ({
+      scrollToTop: () => {
+        if (mainScrollViewRef.current) {
+          mainScrollViewRef.current.scrollTo({ y: 0, animated: true });
+        }
+      },
+    }), []);
 
     // Scroll to row when it receives focus (for TV navigation)
     const scrollToRow = useCallback(
@@ -838,8 +853,8 @@ const MediaGrid = React.memo(
         );
       }
 
-      // Key changes when row count changes, forcing spatial navigation to recalculate layout
-      const gridKey = `grid-${rows.length}`;
+      // Key changes when row count or listKey changes, forcing spatial navigation to recalculate layout
+      const gridKey = `grid-${rows.length}${listKey ? `-${listKey}` : ''}`;
 
       // Standard mode: Use SpatialNavigationNode for focus management
       const isAndroidDevice = Platform.OS === 'android';
@@ -863,8 +878,8 @@ const MediaGrid = React.memo(
           isTVSelectable={false}
           // @ts-ignore - TV-specific prop
           tvRemoveGestureEnabled={Platform.isTV}>
-          {ListHeaderComponent}
           <SpatialNavigationNode key={gridKey} orientation="vertical" alignInGrid>
+            {ListHeaderComponent}
             {rows.map((row, rowIndex) => {
               const rowKey = `row-${rowIndex}`;
               return (
@@ -920,26 +935,28 @@ const MediaGrid = React.memo(
         {renderContent()}
       </View>
     );
-  },
-  (prevProps, nextProps) => {
-    // Only re-render if props actually changed
-    return (
-      prevProps.title === nextProps.title &&
-      prevProps.items === nextProps.items &&
-      prevProps.loading === nextProps.loading &&
-      prevProps.error === nextProps.error &&
-      prevProps.numColumns === nextProps.numColumns &&
-      prevProps.layout === nextProps.layout &&
-      prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
-      prevProps.badgeVisibility === nextProps.badgeVisibility &&
-      prevProps.watchStateIconStyle === nextProps.watchStateIconStyle &&
-      prevProps.useNativeFocus === nextProps.useNativeFocus &&
-      prevProps.useMinimalCards === nextProps.useMinimalCards &&
-      prevProps.loadingMore === nextProps.loadingMore &&
-      prevProps.hasMoreItems === nextProps.hasMoreItems
-      // onItemPress and onEndReached are omitted - function reference changes are expected
-    );
-  },
-);
+  });
 
-export default MediaGrid;
+// Wrap in memo with custom areEqual for performance
+const MemoizedMediaGrid = React.memo(MediaGrid, (prevProps, nextProps) => {
+  // Only re-render if props actually changed
+  return (
+    prevProps.title === nextProps.title &&
+    prevProps.items === nextProps.items &&
+    prevProps.loading === nextProps.loading &&
+    prevProps.error === nextProps.error &&
+    prevProps.numColumns === nextProps.numColumns &&
+    prevProps.layout === nextProps.layout &&
+    prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
+    prevProps.badgeVisibility === nextProps.badgeVisibility &&
+    prevProps.watchStateIconStyle === nextProps.watchStateIconStyle &&
+    prevProps.useNativeFocus === nextProps.useNativeFocus &&
+    prevProps.useMinimalCards === nextProps.useMinimalCards &&
+    prevProps.loadingMore === nextProps.loadingMore &&
+    prevProps.hasMoreItems === nextProps.hasMoreItems &&
+    prevProps.listKey === nextProps.listKey
+    // onItemPress and onEndReached are omitted - function reference changes are expected
+  );
+});
+
+export default MemoizedMediaGrid;
