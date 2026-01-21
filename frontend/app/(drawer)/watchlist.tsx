@@ -158,10 +158,14 @@ function enrichWithWatchStatus<T extends { id: string; mediaType: string; percen
             ? 'partial'
             : 'none';
 
+      // Calculate unwatched count for badge display
+      const unwatchedCount = totalEpisodes > 0 ? totalEpisodes - watchedEpisodes : undefined;
+
       return {
         ...title,
         isWatched: seriesWatched || allEpisodesWatched,
         watchState,
+        unwatchedCount,
       };
     }
     return title;

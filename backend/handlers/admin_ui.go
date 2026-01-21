@@ -472,7 +472,7 @@ var SettingsSchema = map[string]interface{}{
 					{"value": "watchProgress", "label": "Watch Progress"},
 					{"value": "releaseStatus", "label": "Release Status"},
 					{"value": "watchState", "label": "Watch State"},
-					{"value": "unwatchedCount", "label": "Unwatched Episode Count (Coming Soon)", "disabled": true},
+					{"value": "unwatchedCount", "label": "Unwatched Episode Count"},
 				},
 			},
 			"watchStateIconStyle": map[string]interface{}{
