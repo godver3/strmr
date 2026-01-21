@@ -5,7 +5,7 @@ import MediaGrid from '@/components/MediaGrid';
 import { useMenuContext } from '@/components/MenuContext';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
-import { apiService, type Title, type TrendingItem } from '@/services/api';
+import { apiService, type Title, type TrendingItem, type PersonDetails } from '@/services/api';
 import { mapWatchlistToTitles } from '@/services/watchlist';
 import {
   DefaultFocus,
@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { isTablet, responsiveSize, tvScale } from '@/theme/tokens/tvScale';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 
@@ -118,14 +118,17 @@ export default function WatchlistScreen() {
     [openMenu],
   );
 
-  // Get shelf and collection parameters - if present, we're exploring a non-watchlist shelf
-  const { shelf: shelfId, collection: collectionId, collectionName } = useLocalSearchParams<{
+  // Get shelf, collection, and person parameters - if present, we're exploring a non-watchlist shelf
+  const { shelf: shelfId, collection: collectionId, collectionName, person: personId, personName } = useLocalSearchParams<{
     shelf?: string;
     collection?: string;
     collectionName?: string;
+    person?: string;
+    personName?: string;
   }>();
-  const isExploreMode = !!shelfId || !!collectionId;
+  const isExploreMode = !!shelfId || !!collectionId || !!personId;
   const isCollectionMode = !!collectionId;
+  const isPersonMode = !!personId;
 
   // Get shelf configuration for custom lists
   const shelfConfig = useMemo(() => {
@@ -153,6 +156,40 @@ export default function WatchlistScreen() {
   const [collectionItems, setCollectionItems] = useState<Title[]>([]);
   const [collectionLoading, setCollectionLoading] = useState(false);
   const [collectionError, setCollectionError] = useState<string | null>(null);
+
+  // Person mode state
+  const [personDetails, setPersonDetails] = useState<PersonDetails | null>(null);
+  const [personLoading, setPersonLoading] = useState(false);
+  const [personError, setPersonError] = useState<string | null>(null);
+  const [bioModalVisible, setBioModalVisible] = useState(false);
+  const [filmographySort, setFilmographySort] = useState<'popular' | 'chronological'>('popular');
+
+  // Fetch person data when in person mode
+  useEffect(() => {
+    if (!isPersonMode || !personId) {
+      setPersonDetails(null);
+      return;
+    }
+
+    const fetchPerson = async () => {
+      setPersonLoading(true);
+      setPersonError(null);
+      try {
+        const personIdNum = parseInt(personId, 10);
+        if (isNaN(personIdNum)) {
+          throw new Error('Invalid person ID');
+        }
+        const details = await apiService.getPersonDetails(personIdNum);
+        setPersonDetails(details);
+      } catch (err) {
+        setPersonError(err instanceof Error ? err.message : 'Failed to load person details');
+      } finally {
+        setPersonLoading(false);
+      }
+    };
+
+    void fetchPerson();
+  }, [isPersonMode, personId]);
 
   // Fetch collection data when in collection mode
   useEffect(() => {
@@ -296,19 +333,21 @@ export default function WatchlistScreen() {
   // Determine current loading state (initial loading only, not load more)
   const loading = useMemo(() => {
     if (!isExploreMode) return watchlistLoading;
+    if (isPersonMode) return personLoading;
     if (isCollectionMode) return collectionLoading;
     if (shelfId === 'continue-watching') return continueWatchingLoading;
     if (needsProgressiveLoading) return exploreLoading;
     return false;
-  }, [isExploreMode, isCollectionMode, shelfId, watchlistLoading, collectionLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, shelfId, watchlistLoading, personLoading, collectionLoading, continueWatchingLoading, needsProgressiveLoading, exploreLoading]);
 
   // Determine current error state
   const error = useMemo(() => {
     if (!isExploreMode) return watchlistError;
+    if (isPersonMode) return personError;
     if (isCollectionMode) return collectionError;
     if (needsProgressiveLoading) return exploreError;
     return null;
-  }, [isExploreMode, isCollectionMode, watchlistError, collectionError, needsProgressiveLoading, exploreError]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, watchlistError, personError, collectionError, needsProgressiveLoading, exploreError]);
 
   // Cache years for watchlist items missing year data
   const [watchlistYears, setWatchlistYears] = useState<Map<string, number>>(new Map());
@@ -599,25 +638,58 @@ export default function WatchlistScreen() {
     });
   }, [isCollectionMode, collectionItems, movieReleases]);
 
+  // Map person filmography to titles, sorted based on user preference
+  const personTitles = useMemo((): WatchlistTitle[] => {
+    if (!isPersonMode || !personDetails?.filmography?.length) return [];
+
+    let sorted = [...personDetails.filmography];
+
+    if (filmographySort === 'chronological') {
+      // Sort by year ascending (oldest first), items without year go to the end
+      sorted.sort((a, b) => {
+        if (!a.year && !b.year) return 0;
+        if (!a.year) return 1;
+        if (!b.year) return -1;
+        return a.year - b.year;
+      });
+    }
+    // 'popular' keeps the original order from TMDB (already sorted by popularity)
+
+    return sorted.map((item, index) => {
+      const cachedReleases = item.mediaType === 'movie' ? movieReleases.get(item.id) : undefined;
+      return {
+        ...item,
+        uniqueKey: `person:${item.id}-${index}`,
+        theatricalRelease: item.theatricalRelease ?? cachedReleases?.theatricalRelease,
+        homeRelease: item.homeRelease ?? cachedReleases?.homeRelease,
+      };
+    });
+  }, [isPersonMode, personDetails, movieReleases, filmographySort]);
+
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {
     if (!isExploreMode) return watchlistTitles;
+    if (isPersonMode) return personTitles;
     if (isCollectionMode) return collectionTitles;
     if (shelfId === 'continue-watching') return continueWatchingTitles;
     if (needsProgressiveLoading) return exploreTitles;
     return [];
-  }, [isExploreMode, isCollectionMode, shelfId, watchlistTitles, collectionTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, shelfId, watchlistTitles, personTitles, collectionTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles]);
 
   // Page title based on mode
   const pageTitle = useMemo(() => {
     if (!isExploreMode) return 'Your Watchlist';
+    if (isPersonMode) {
+      // Use person details name if loaded, otherwise decode URL param
+      return personDetails?.person.name ?? (personName ? decodeURIComponent(personName) : 'Actor');
+    }
     if (isCollectionMode && collectionName) return decodeURIComponent(collectionName);
     if (shelfConfig?.name) return shelfConfig.name;
     if (shelfId === 'continue-watching') return 'Continue Watching';
     if (shelfId === 'trending-movies') return 'Trending Movies';
     if (shelfId === 'trending-tv' || shelfId === 'trending-shows') return 'Trending TV Shows';
     return 'Explore';
-  }, [isExploreMode, isCollectionMode, collectionName, shelfConfig?.name, shelfId]);
+  }, [isExploreMode, isPersonMode, personDetails?.person.name, personName, isCollectionMode, collectionName, shelfConfig?.name, shelfId]);
 
   // Tab title - show "Explore" when in explore mode, otherwise "Watchlist"
   const tabTitle = isExploreMode ? 'Explore' : 'Watchlist';
@@ -641,6 +713,67 @@ export default function WatchlistScreen() {
       { key: 'movie', label: 'Movies', icon: 'film-outline' },
       { key: 'series', label: 'TV Shows', icon: 'tv-outline' },
     ];
+
+  // Person header component for ListHeaderComponent (scrolls with grid)
+  const personHeaderComponent = useMemo(() => {
+    if (!isPersonMode || !personDetails) return null;
+    return (
+      <View style={styles.personHeader}>
+        <View style={styles.personTopRow}>
+          {personDetails.person.profileUrl && (
+            <Image
+              source={{ uri: personDetails.person.profileUrl }}
+              style={styles.personPhoto}
+              resizeMode="cover"
+            />
+          )}
+          <View style={styles.personBioWrap}>
+            {personDetails.person.knownFor && (
+              <Text style={styles.personRole}>{personDetails.person.knownFor}</Text>
+            )}
+            {personDetails.person.biography && (
+              <Pressable onPress={() => setBioModalVisible(true)}>
+                <Text style={styles.personBioTop} numberOfLines={5}>
+                  {personDetails.person.biography}
+                </Text>
+                <Text style={styles.bioReadMore}>Tap to read more</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+        {/* Sort toggle for filmography */}
+        <View style={styles.sortToggleRow}>
+          <Text style={styles.sortLabel}>Sort by:</Text>
+          <View style={styles.sortButtons}>
+            <Pressable
+              style={[styles.sortButton, filmographySort === 'popular' && styles.sortButtonActive]}
+              onPress={() => setFilmographySort('popular')}>
+              <Ionicons
+                name="flame"
+                size={18}
+                color={filmographySort === 'popular' ? theme.colors.accent.primary : theme.colors.text.muted}
+              />
+              <Text style={[styles.sortButtonText, filmographySort === 'popular' && styles.sortButtonTextActive]}>
+                Popular
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.sortButton, filmographySort === 'chronological' && styles.sortButtonActive]}
+              onPress={() => setFilmographySort('chronological')}>
+              <Ionicons
+                name="calendar"
+                size={18}
+                color={filmographySort === 'chronological' ? theme.colors.accent.primary : theme.colors.text.muted}
+              />
+              <Text style={[styles.sortButtonText, filmographySort === 'chronological' && styles.sortButtonTextActive]}>
+                Year
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    );
+  }, [isPersonMode, personDetails, styles, filmographySort, theme.colors]);
 
   const handleTitlePress = useCallback(
     (title: WatchlistTitle) => {
@@ -701,8 +834,8 @@ export default function WatchlistScreen() {
               <Text style={styles.title}>{pageTitle}</Text>
             </View>
 
-            {/* Filter buttons row - hidden in collection mode since collections are all movies */}
-            {!isCollectionMode && (
+            {/* Filter buttons row - hidden in collection mode and person mode */}
+            {!isCollectionMode && !isPersonMode && (
               <SpatialNavigationNode orientation="horizontal">
                 <View style={styles.filtersRow}>
                   {filterOptions.map((option, index) => {
@@ -723,9 +856,9 @@ export default function WatchlistScreen() {
               </SpatialNavigationNode>
             )}
 
-            {/* Grid content - hide title in collection mode since page title already shows it */}
+            {/* Grid content - hide title in collection/person mode since page title already shows it */}
             <MediaGrid
-              title={isCollectionMode ? '' : pageTitle}
+              title={isCollectionMode || isPersonMode ? '' : pageTitle}
               items={filteredTitles}
               loading={loading}
               error={error}
@@ -738,10 +871,35 @@ export default function WatchlistScreen() {
               onEndReached={handleLoadMore}
               loadingMore={exploreLoadingMore}
               hasMoreItems={hasMoreItems}
+              ListHeaderComponent={personHeaderComponent}
             />
           </SpatialNavigationNode>
         </View>
       </FixedSafeAreaView>
+
+      {/* Biography Modal - scrollable content with close button */}
+      {bioModalVisible && (
+        <Modal
+          visible={bioModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setBioModalVisible(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Pressable style={styles.modalCloseButton} onPress={() => setBioModalVisible(false)}>
+                <Ionicons name="close-circle" size={32} color={theme.colors.text.secondary} />
+              </Pressable>
+              <ScrollView
+                contentContainerStyle={styles.modalScrollContent}
+                showsVerticalScrollIndicator={true}>
+                <Text style={styles.modalBioText}>
+                  {personDetails?.person.biography ?? 'No biography available.'}
+                </Text>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SpatialNavigationRoot>
   );
 }
@@ -770,5 +928,106 @@ const createStyles = (theme: NovaTheme) =>
       flexWrap: 'wrap',
       gap: theme.spacing.lg,
       marginBottom: theme.spacing.lg,
+    },
+    personHeader: {
+      marginBottom: theme.spacing.lg,
+    },
+    personTopRow: {
+      flexDirection: 'row',
+    },
+    personPhoto: {
+      width: responsiveSize(100, 120, 150),
+      height: responsiveSize(150, 180, 225),
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.background.surface,
+      marginRight: theme.spacing.lg,
+    },
+    personBioWrap: {
+      flex: 1,
+      paddingTop: theme.spacing.xs,
+    },
+    personRole: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.secondary,
+      marginBottom: theme.spacing.sm,
+    },
+    personBioTop: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      lineHeight: Platform.isTV ? tvScale(22) : 22,
+    },
+    bioReadMore: {
+      ...theme.typography.label.sm,
+      color: theme.colors.accent.primary,
+      marginTop: theme.spacing.xs,
+    },
+    sortToggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: theme.spacing.lg,
+      paddingTop: theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border.subtle,
+    },
+    sortLabel: {
+      ...theme.typography.label.sm,
+      color: theme.colors.text.muted,
+      marginRight: theme.spacing.md,
+    },
+    sortButtons: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+    },
+    sortButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.xs,
+      paddingVertical: theme.spacing.xs,
+      paddingHorizontal: theme.spacing.sm,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.background.surface,
+    },
+    sortButtonActive: {
+      backgroundColor: theme.colors.accent.primary + '20',
+    },
+    sortButtonText: {
+      ...theme.typography.label.sm,
+      color: theme.colors.text.muted,
+    },
+    sortButtonTextActive: {
+      color: theme.colors.accent.primary,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.9)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.spacing.xl,
+    },
+    modalContent: {
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: theme.radius.lg,
+      maxWidth: 600,
+      maxHeight: '85%',
+      width: '100%',
+    },
+    modalCloseButton: {
+      position: 'absolute',
+      top: theme.spacing.sm,
+      right: theme.spacing.sm,
+      zIndex: 10,
+      padding: theme.spacing.xs,
+      backgroundColor: theme.colors.background.elevated,
+      borderRadius: 20,
+    },
+    modalScrollContent: {
+      padding: theme.spacing.xl,
+      paddingTop: theme.spacing['3xl'],
+      paddingBottom: theme.spacing['2xl'],
+    },
+    modalBioText: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      lineHeight: 26,
     },
   });

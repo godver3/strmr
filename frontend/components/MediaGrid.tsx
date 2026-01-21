@@ -55,6 +55,7 @@ interface MediaGridProps {
   loadingMore?: boolean; // Show loading indicator at the bottom for progressive loading
   hasMoreItems?: boolean; // Whether there are more items to load
   onItemFocus?: (index: number) => void; // Called when an item receives focus (TV) - index is the item's position in the list
+  ListHeaderComponent?: React.ReactElement | null; // Component to render above the list (scrolls with content)
 }
 
 // Static styles for MinimalCard - avoids object creation per render
@@ -387,6 +388,7 @@ const MediaGrid = React.memo(
     loadingMore = false,
     hasMoreItems = false,
     onItemFocus,
+    ListHeaderComponent,
   }: MediaGridProps) {
     const theme = useTheme();
     const { width: screenWidth, height: screenHeight } = useTVDimensions();
@@ -710,6 +712,7 @@ const MediaGrid = React.memo(
               removeClippedSubviews={isAndroid}
               onEndReached={onEndReached}
               onEndReachedThreshold={1.5}
+              ListHeaderComponent={ListHeaderComponent}
               ListFooterComponent={LoadingMoreIndicator}
             />
           );

@@ -1,24 +1,28 @@
 import React, { memo, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { Image } from '@/components/Image';
-import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
-import type { Credits, CastMember } from '@/services/api';
+import type { Title } from '@/services/api';
 
-interface CastSectionProps {
-  credits: Credits | null | undefined;
+interface MoreLikeThisSectionProps {
+  titles: Title[] | null | undefined;
   isLoading?: boolean;
   theme: NovaTheme;
-  onCastMemberPress?: (actor: CastMember) => void;
+  onTitlePress?: (title: Title) => void;
 }
 
-const CastSection = memo(function CastSection({ credits, isLoading, theme, onCastMemberPress }: CastSectionProps) {
-  const styles = useMemo(() => createCastStyles(theme), [theme]);
+const MoreLikeThisSection = memo(function MoreLikeThisSection({
+  titles,
+  isLoading,
+  theme,
+  onTitlePress,
+}: MoreLikeThisSectionProps) {
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <Text style={styles.heading}>Cast</Text>
+        <Text style={styles.heading}>More Like This</Text>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color={theme.colors.text.muted} />
         </View>
@@ -26,39 +30,36 @@ const CastSection = memo(function CastSection({ credits, isLoading, theme, onCas
     );
   }
 
-  if (!credits?.cast?.length) {
+  if (!titles?.length) {
     return null;
   }
 
-  // Show top 8 actors
-  const topCast = credits.cast.slice(0, 8);
-
   return (
     <View style={styles.container}>
-      <Text style={styles.heading}>Top Billed Cast</Text>
+      <Text style={styles.heading}>More Like This</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         style={styles.scrollView}>
-        {topCast.map((actor) => (
+        {titles.map((title) => (
           <Pressable
-            key={actor.id}
-            onPress={() => onCastMemberPress?.(actor)}
-            style={({ pressed }) => [styles.actorCard, pressed && styles.actorCardPressed]}>
-            {actor.profileUrl ? (
-              <Image source={{ uri: actor.profileUrl }} style={styles.actorPhoto} contentFit="cover" />
+            key={title.id}
+            style={styles.card}
+            onPress={() => onTitlePress?.(title)}>
+            {title.poster?.url ? (
+              <Image source={{ uri: title.poster.url }} style={styles.poster} contentFit="cover" />
             ) : (
-              <View style={[styles.actorPhoto, styles.actorPhotoPlaceholder]}>
-                <Ionicons name="person" size={32} color={theme.colors.text.muted} />
+              <View style={[styles.poster, styles.posterPlaceholder]}>
+                <Text style={styles.placeholderText}>{title.name.charAt(0)}</Text>
               </View>
             )}
-            <Text style={styles.actorName} numberOfLines={2}>
-              {actor.name}
+            <Text style={styles.titleName} numberOfLines={2}>
+              {title.name}
             </Text>
-            <Text style={styles.characterName} numberOfLines={2}>
-              {actor.character}
-            </Text>
+            {title.year > 0 && (
+              <Text style={styles.titleYear}>{title.year}</Text>
+            )}
           </Pressable>
         ))}
       </ScrollView>
@@ -66,7 +67,7 @@ const CastSection = memo(function CastSection({ credits, isLoading, theme, onCas
   );
 });
 
-const createCastStyles = (theme: NovaTheme) =>
+const createStyles = (theme: NovaTheme) =>
   StyleSheet.create({
     container: {
       marginTop: theme.spacing.xl,
@@ -88,35 +89,36 @@ const createCastStyles = (theme: NovaTheme) =>
       paddingHorizontal: theme.spacing['3xl'],
       gap: theme.spacing.md,
     },
-    actorCard: {
+    card: {
       width: 100,
     },
-    actorCardPressed: {
-      opacity: 0.7,
-    },
-    actorPhoto: {
+    poster: {
       width: 100,
       height: 150,
       borderRadius: theme.radius.md,
       backgroundColor: theme.colors.background.surface,
     },
-    actorPhotoPlaceholder: {
+    posterPlaceholder: {
       justifyContent: 'center',
       alignItems: 'center',
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.subtle,
     },
-    actorName: {
+    placeholderText: {
+      ...theme.typography.title.lg,
+      color: theme.colors.text.muted,
+    },
+    titleName: {
       ...theme.typography.body.sm,
       color: theme.colors.text.primary,
       fontWeight: '600',
       marginTop: theme.spacing.xs,
     },
-    characterName: {
+    titleYear: {
       ...theme.typography.caption.sm,
       color: theme.colors.text.secondary,
       marginTop: 2,
     },
   });
 
-export default CastSection;
+export default MoreLikeThisSection;

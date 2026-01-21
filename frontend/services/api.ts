@@ -107,6 +107,22 @@ export interface CollectionDetails {
   movies: Title[];
 }
 
+export interface Person {
+  id: number;
+  name: string;
+  biography?: string;
+  birthday?: string;
+  deathday?: string;
+  placeOfBirth?: string;
+  profileUrl?: string;
+  knownFor?: string; // "Acting", "Directing", etc.
+}
+
+export interface PersonDetails {
+  person: Person;
+  filmography: Title[];
+}
+
 export interface Title {
   id: string;
   name: string;
@@ -1266,6 +1282,17 @@ class ApiService {
 
   async getCollectionDetails(collectionId: number): Promise<CollectionDetails> {
     return this.request<CollectionDetails>(`/metadata/collection?id=${collectionId}`);
+  }
+
+  async getSimilarContent(mediaType: string, tmdbId: number): Promise<Title[]> {
+    const params = new URLSearchParams();
+    params.set('type', mediaType);
+    params.set('tmdbId', String(tmdbId));
+    return this.request<Title[]>(`/metadata/similar?${params.toString()}`);
+  }
+
+  async getPersonDetails(personId: number): Promise<PersonDetails> {
+    return this.request<PersonDetails>(`/metadata/person?id=${personId}`);
   }
 
   async getTrailers(params: TrailerQuery): Promise<TrailerResponse> {

@@ -16,16 +16,19 @@ import TVEpisodeStrip from '@/components/TVEpisodeStrip';
 let TVActionButton: typeof import('@/components/tv').TVActionButton | null = null;
 let TVEpisodeCarousel: typeof import('@/components/tv').TVEpisodeCarousel | null = null;
 let TVCastSection: typeof import('@/components/tv').TVCastSection | null = null;
+let TVMoreLikeThisSection: typeof import('@/components/tv').TVMoreLikeThisSection | null = null;
 try {
   const tvComponents = require('@/components/tv');
   TVActionButton = tvComponents.TVActionButton;
   TVEpisodeCarousel = tvComponents.TVEpisodeCarousel;
   TVCastSection = tvComponents.TVCastSection;
+  TVMoreLikeThisSection = tvComponents.TVMoreLikeThisSection;
 } catch {
   // TV components not available, will use fallbacks
 }
 import {
   apiService,
+  type CastMember,
   type ContentPreference,
   type EpisodeWatchPayload,
   type NZBResult,
@@ -82,6 +85,7 @@ import { buildEpisodeQuery, buildSeasonQuery, formatPublishDate, padNumber, toSt
 import MobileParallaxContainer from './details/mobile-parallax-container';
 import MobileEpisodeCarousel from './details/mobile-episode-carousel';
 import CastSection from '@/components/CastSection';
+import MoreLikeThisSection from '@/components/MoreLikeThisSection';
 
 const SELECTION_TOAST_ID = 'details-nzb-status';
 
@@ -738,6 +742,10 @@ export default function DetailsScreen() {
   const [trailerPrequeueId, setTrailerPrequeueId] = useState<string | null>(null);
   const [trailerPrequeueStatus, setTrailerPrequeueStatus] = useState<TrailerPrequeueStatus | null>(null);
 
+  // Similar content ("More Like This") state
+  const [similarContent, setSimilarContent] = useState<Title[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+
   const [bulkWatchModalVisible, setBulkWatchModalVisible] = useState(false);
   const [resumeModalVisible, setResumeModalVisible] = useState(false);
   const [seasonSelectorVisible, setSeasonSelectorVisible] = useState(false);
@@ -1345,6 +1353,37 @@ export default function DetailsScreen() {
       cancelled = true;
     };
   }, [movieDetailsQuery]);
+
+  // Fetch similar content ("More Like This") when TMDB ID is available
+  useEffect(() => {
+    if (!tmdbIdNumber) {
+      setSimilarContent([]);
+      setSimilarLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSimilarLoading(true);
+
+    const fetchMediaType = isSeries ? 'series' : 'movie';
+    apiService
+      .getSimilarContent(fetchMediaType, tmdbIdNumber)
+      .then((titles) => {
+        if (cancelled) return;
+        setSimilarContent(titles);
+        setSimilarLoading(false);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn('[details] similar content fetch failed', error);
+        setSimilarContent([]);
+        setSimilarLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbIdNumber, isSeries]);
 
   // Fetch series details for backdrop updates AND episodes (shared with SeriesEpisodes)
   useEffect(() => {
@@ -3585,6 +3624,39 @@ export default function DetailsScreen() {
     });
   }, [movieDetails?.collection, router]);
 
+  const handleSimilarTitlePress = useCallback(
+    (item: Title) => {
+      router.push({
+        pathname: '/details',
+        params: {
+          title: item.name,
+          titleId: item.id ?? '',
+          mediaType: item.mediaType ?? 'movie',
+          description: item.overview ?? '',
+          headerImage: item.backdrop?.url ?? item.poster?.url ?? '',
+          posterUrl: item.poster?.url ?? '',
+          backdropUrl: item.backdrop?.url ?? '',
+          tmdbId: item.tmdbId ? String(item.tmdbId) : '',
+          year: item.year ? String(item.year) : '',
+        },
+      });
+    },
+    [router],
+  );
+
+  const handleCastMemberPress = useCallback(
+    (actor: CastMember) => {
+      router.push({
+        pathname: '/watchlist',
+        params: {
+          person: String(actor.id),
+          personName: encodeURIComponent(actor.name),
+        },
+      });
+    },
+    [router],
+  );
+
   const handleCloseTrailer = useCallback(() => {
     setTrailerModalVisible(false);
     setActiveTrailer(null);
@@ -4509,6 +4581,27 @@ export default function DetailsScreen() {
                   maxCast={10}
                   onFocus={() => handleTVFocusAreaChange('cast')}
                   compactMargin
+                  onCastMemberPress={handleCastMemberPress}
+                />
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
+          )}
+          {/* TV More Like This Section */}
+          {Platform.isTV && TVMoreLikeThisSection && (
+            <SpatialNavigationNode
+              orientation="horizontal"
+              focusKey="more-like-this-wrapper"
+              onActive={() => console.log('[Details NAV DEBUG] more-like-this-wrapper ACTIVE')}
+              onInactive={() => console.log('[Details NAV DEBUG] more-like-this-wrapper INACTIVE')}>
+              {similarLoading || similarContent.length > 0 ? (
+                <TVMoreLikeThisSection
+                  titles={similarContent}
+                  isLoading={similarLoading}
+                  maxTitles={20}
+                  onFocus={() => handleTVFocusAreaChange('similar')}
+                  onTitlePress={handleSimilarTitlePress}
                 />
               ) : (
                 <View />
@@ -4784,7 +4877,15 @@ export default function DetailsScreen() {
       )}
 
       {/* Cast section */}
-      <CastSection credits={credits} isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading} theme={theme} />
+      <CastSection credits={credits} isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading} theme={theme} onCastMemberPress={handleCastMemberPress} />
+
+      {/* More Like This section */}
+      <MoreLikeThisSection
+        titles={similarContent}
+        isLoading={similarLoading}
+        theme={theme}
+        onTitlePress={handleSimilarTitlePress}
+      />
 
       {/* Hidden SeriesEpisodes component to load data (same as in renderDetailsContent) */}
       {isSeries && (

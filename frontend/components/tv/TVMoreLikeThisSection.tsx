@@ -1,14 +1,13 @@
 /**
- * TV Cast Section - Horizontal scrollable cast gallery with D-pad focus support
+ * TV More Like This Section - Horizontal scrollable similar content gallery with D-pad focus support
  * Uses spatial navigation for proper integration with other rows
  */
 
 import React, { memo, useCallback, useMemo } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
-import { Ionicons } from '@expo/vector-icons';
 import type { NovaTheme } from '@/theme';
-import type { Credits, CastMember } from '@/services/api';
+import type { Title } from '@/services/api';
 import { useTheme } from '@/theme';
 import { tvScale } from '@/theme/tokens/tvScale';
 import {
@@ -19,65 +18,59 @@ import MarqueeText from './MarqueeText';
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
-// Card dimensions - scaled for TV viewing distance
+// Card dimensions - scaled for TV viewing distance (poster aspect ratio 2:3)
 const CARD_WIDTH = tvScale(170);
-const CARD_HEIGHT = tvScale(260);
-const PHOTO_HEIGHT = tvScale(195);
+const CARD_HEIGHT = tvScale(310);
+const POSTER_HEIGHT = tvScale(255);
 const CARD_GAP = tvScale(18);
 
-interface TVCastSectionProps {
-  credits: Credits | null | undefined;
+interface TVMoreLikeThisSectionProps {
+  titles: Title[] | null | undefined;
   isLoading?: boolean;
-  maxCast?: number;
+  maxTitles?: number;
   onFocus?: () => void;
-  /** Reduce top margin (e.g. for movies where cast follows action bar directly) */
-  compactMargin?: boolean;
-  /** Called when a cast member is selected */
-  onCastMemberPress?: (actor: CastMember) => void;
+  onTitlePress?: (title: Title) => void;
 }
 
-const TVCastSection = memo(function TVCastSection({
-  credits,
+const TVMoreLikeThisSection = memo(function TVMoreLikeThisSection({
+  titles,
   isLoading,
-  maxCast = 12,
+  maxTitles = 20,
   onFocus,
-  compactMargin,
-  onCastMemberPress,
-}: TVCastSectionProps) {
+  onTitlePress,
+}: TVMoreLikeThisSectionProps) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const itemSize = CARD_WIDTH + CARD_GAP;
 
-  // Get cast to display
-  const castToShow = useMemo(() => {
-    if (!credits?.cast?.length) return [];
-    return credits.cast.slice(0, maxCast);
-  }, [credits, maxCast]);
+  // Get titles to display
+  const titlesToShow = useMemo(() => {
+    if (!titles?.length) return [];
+    return titles.slice(0, maxTitles);
+  }, [titles, maxTitles]);
 
-  const renderCastCard = useCallback(
-    ({ item: actor }: { item: CastMember }) => {
+  const renderTitleCard = useCallback(
+    ({ item: title }: { item: Title }) => {
       return (
         <SpatialNavigationFocusableView
           onFocus={() => onFocus?.()}
-          onSelect={() => onCastMemberPress?.(actor)}>
+          onSelect={() => onTitlePress?.(title)}>
           {({ isFocused }: { isFocused: boolean }) => (
             <View style={[styles.card, isFocused && styles.cardFocused]}>
-              {actor.profileUrl ? (
-                <Image source={{ uri: actor.profileUrl }} style={styles.photo} contentFit="cover" />
+              {title.poster?.url ? (
+                <Image source={{ uri: title.poster.url }} style={styles.poster} contentFit="cover" />
               ) : (
-                <View style={[styles.photo, styles.photoPlaceholder]}>
-                  <Ionicons name="person" size={tvScale(48)} color={theme.colors.text.muted} />
+                <View style={[styles.poster, styles.posterPlaceholder]}>
+                  <Text style={styles.placeholderText}>{title.name.charAt(0)}</Text>
                 </View>
               )}
               <View style={styles.textContainer}>
-                <MarqueeText style={styles.actorName} focused={isFocused}>
-                  {actor.name}
+                <MarqueeText style={styles.titleName} focused={isFocused}>
+                  {title.name}
                 </MarqueeText>
-                {actor.character && (
-                  <MarqueeText style={styles.characterName} focused={isFocused}>
-                    {actor.character}
-                  </MarqueeText>
+                {title.year > 0 && (
+                  <Text style={styles.titleYear}>{title.year}</Text>
                 )}
               </View>
             </View>
@@ -85,7 +78,7 @@ const TVCastSection = memo(function TVCastSection({
         </SpatialNavigationFocusableView>
       );
     },
-    [styles, theme, onFocus, onCastMemberPress],
+    [styles, onFocus, onTitlePress],
   );
 
   // Render skeleton cards while loading
@@ -95,10 +88,10 @@ const TVCastSection = memo(function TVCastSection({
       <View style={styles.skeletonRow}>
         {Array.from({ length: skeletonCount }).map((_, index) => (
           <View key={`skeleton-${index}`} style={styles.skeletonCard}>
-            <View style={styles.skeletonPhoto} />
+            <View style={styles.skeletonPoster} />
             <View style={styles.skeletonTextContainer}>
               <View style={styles.skeletonName} />
-              <View style={styles.skeletonCharacter} />
+              <View style={styles.skeletonYear} />
             </View>
           </View>
         ))}
@@ -106,37 +99,35 @@ const TVCastSection = memo(function TVCastSection({
     );
   }, [styles]);
 
-  if (!castToShow.length && !isLoading) {
+  if (!titlesToShow.length && !isLoading) {
     return null;
   }
 
   // SpatialNavigationVirtualizedList requires numberOfRenderedItems >= numberOfItemsVisibleOnScreen + 2
-  // For small cast lists (< 3 items), render directly without virtualization
-  const useVirtualizedList = castToShow.length >= 3;
+  // For small lists (< 3 items), render directly without virtualization
+  const useVirtualizedList = titlesToShow.length >= 3;
 
-  // Note: This component should be wrapped in a SpatialNavigationNode at the parent level
-  // to maintain consistent navigation order (see details.tsx)
   return (
-    <View style={[styles.container, compactMargin && { marginTop: tvScale(4) }]}>
-      <Text style={styles.heading}>Cast</Text>
+    <View style={styles.container}>
+      <Text style={styles.heading}>More Like This</Text>
       {isLoading ? (
         renderSkeletonCards()
       ) : useVirtualizedList ? (
         <View style={styles.listContainer}>
           <SpatialNavigationVirtualizedList
-            data={castToShow}
-            renderItem={renderCastCard}
+            data={titlesToShow}
+            renderItem={renderTitleCard}
             itemSize={itemSize}
             orientation="horizontal"
-            numberOfRenderedItems={castToShow.length}
-            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(castToShow.length - 2, isAndroidTV ? 5 : 6))}
+            numberOfRenderedItems={titlesToShow.length}
+            numberOfItemsVisibleOnScreen={Math.max(1, Math.min(titlesToShow.length - 2, isAndroidTV ? 5 : 6))}
           />
         </View>
       ) : (
-        <View style={[styles.listContainer, styles.smallCastRow]}>
-          {castToShow.map((actor) => (
-            <React.Fragment key={actor.name + actor.character}>
-              {renderCastCard({ item: actor })}
+        <View style={[styles.listContainer, styles.smallTitleRow]}>
+          {titlesToShow.map((title) => (
+            <React.Fragment key={title.id}>
+              {renderTitleCard({ item: title })}
             </React.Fragment>
           ))}
         </View>
@@ -161,7 +152,7 @@ const createStyles = (theme: NovaTheme) =>
       height: CARD_HEIGHT + tvScale(8),
       paddingLeft: tvScale(48),
     },
-    smallCastRow: {
+    smallTitleRow: {
       flexDirection: 'row',
       gap: CARD_GAP,
     },
@@ -177,9 +168,9 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: theme.colors.background.surface,
       overflow: 'hidden',
     },
-    skeletonPhoto: {
+    skeletonPoster: {
       width: '100%',
-      height: PHOTO_HEIGHT,
+      height: POSTER_HEIGHT,
       backgroundColor: theme.colors.background.elevated,
     },
     skeletonTextContainer: {
@@ -193,9 +184,9 @@ const createStyles = (theme: NovaTheme) =>
       backgroundColor: theme.colors.background.elevated,
       borderRadius: tvScale(4),
     },
-    skeletonCharacter: {
+    skeletonYear: {
       height: tvScale(12),
-      width: '60%',
+      width: '40%',
       backgroundColor: theme.colors.background.elevated,
       borderRadius: tvScale(4),
     },
@@ -211,32 +202,36 @@ const createStyles = (theme: NovaTheme) =>
     cardFocused: {
       borderColor: theme.colors.accent.primary,
     },
-    photo: {
+    poster: {
       width: '100%',
-      height: PHOTO_HEIGHT,
+      height: POSTER_HEIGHT,
       backgroundColor: theme.colors.background.elevated,
     },
-    photoPlaceholder: {
+    posterPlaceholder: {
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    placeholderText: {
+      fontSize: tvScale(48),
+      fontWeight: '600',
+      color: theme.colors.text.muted,
     },
     textContainer: {
       flex: 1,
       padding: tvScale(10),
       justifyContent: 'flex-start',
     },
-    actorName: {
+    titleName: {
       fontSize: tvScale(17),
       fontWeight: '600',
       color: theme.colors.text.primary,
       lineHeight: tvScale(20),
     },
-    characterName: {
+    titleYear: {
       fontSize: tvScale(15),
       color: theme.colors.text.secondary,
       marginTop: tvScale(3),
-      lineHeight: tvScale(18),
     },
   });
 
-export default TVCastSection;
+export default TVMoreLikeThisSection;
