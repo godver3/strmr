@@ -45,6 +45,9 @@ type DisplaySettings struct {
 	// BadgeVisibility controls which badges appear on media cards.
 	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 	BadgeVisibility []string `json:"badgeVisibility"`
+	// WatchStateIconStyle controls the color of watch state icons.
+	// "colored" (default) = green/yellow circles, "white" = all white circles
+	WatchStateIconStyle string `json:"watchStateIconStyle,omitempty"`
 }
 
 // LiveTVSettings contains per-user Live TV preferences.
@@ -144,7 +147,8 @@ func DefaultUserSettings() UserSettings {
 			SelectedCategories: []string{},
 		},
 		Display: DisplaySettings{
-			BadgeVisibility: []string{"watchProgress"},
+			BadgeVisibility:     []string{"watchProgress"},
+			WatchStateIconStyle: "colored",
 		},
 		Network: NetworkSettings{
 			HomeWifiSSID:     "",

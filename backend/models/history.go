@@ -29,6 +29,10 @@ type SeriesWatchState struct {
 	NextEpisode     *EpisodeReference           `json:"nextEpisode,omitempty"`
 	WatchedEpisodes map[string]EpisodeReference `json:"watchedEpisodes,omitempty"`
 	PercentWatched  float64                     `json:"percentWatched,omitempty"` // For in-progress movies
+
+	// Episode counts for tracking series completion (excludes specials/season 0)
+	WatchedEpisodeCount int `json:"watchedEpisodeCount,omitempty"` // Number of episodes user has watched
+	TotalEpisodeCount   int `json:"totalEpisodeCount,omitempty"`   // Total released episodes in series
 }
 
 // EpisodeWatchPayload represents a request to record that a user started an episode.

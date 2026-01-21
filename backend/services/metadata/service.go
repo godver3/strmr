@@ -1683,6 +1683,7 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	}
 	translationChan := make(chan translationResult, 1)
 	localizedEpsChan := make(chan map[int64]tvdbEpisode, 1)
+	seasonTransChan := make(chan map[int64]translationResult, 1)
 
 	// Fetch series translations in background
 	go func() {
@@ -1692,6 +1693,47 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			result.overview = strings.TrimSpace(translation.Overview)
 		}
 		translationChan <- result
+	}()
+
+	// Fetch season translations in background (parallel for primary season type only)
+	go func() {
+		seasonTrans := make(map[int64]translationResult)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+
+		// Detect primary season type to only fetch translations for relevant seasons
+		primaryType := detectPrimarySeasonType(extended.Seasons)
+		if primaryType == "" {
+			primaryType = "official"
+		}
+
+		for _, season := range extended.Seasons {
+			if season.ID <= 0 || season.Number < 0 {
+				continue
+			}
+			// Only fetch translations for seasons matching the primary type
+			seasonType := strings.ToLower(strings.TrimSpace(season.Type.Type))
+			if seasonType == "" {
+				seasonType = strings.ToLower(strings.TrimSpace(season.Type.Name))
+			}
+			if seasonType != "" && seasonType != primaryType {
+				continue
+			}
+			wg.Add(1)
+			go func(seasonID int64) {
+				defer wg.Done()
+				if translation, err := s.client.seasonTranslations(seasonID, s.client.language); err == nil && translation != nil {
+					mu.Lock()
+					seasonTrans[seasonID] = translationResult{
+						name:     strings.TrimSpace(translation.Name),
+						overview: strings.TrimSpace(translation.Overview),
+					}
+					mu.Unlock()
+				}
+			}(season.ID)
+		}
+		wg.Wait()
+		seasonTransChan <- seasonTrans
 	}()
 
 	// Fetch localized episodes in background
@@ -1791,6 +1833,13 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 	seasonOrder := make([]int, 0)
 	seasonMap := make(map[int]*models.SeriesSeason)
 
+	// Detect the primary season type to filter seasons correctly
+	primarySeasonType := detectPrimarySeasonType(extended.Seasons)
+	if primarySeasonType == "" {
+		primarySeasonType = "official"
+	}
+	log.Printf("[metadata] using primary season type tvdbId=%d type=%q", tvdbID, primarySeasonType)
+
 	ensureSeason := func(number int) *models.SeriesSeason {
 		if number < 0 {
 			return nil
@@ -1808,8 +1857,20 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 		return season
 	}
 
+	// Get season translations from parallel fetch
+	seasonTranslations := <-seasonTransChan
+	log.Printf("[metadata] received season translations tvdbId=%d count=%d", tvdbID, len(seasonTranslations))
+
 	for _, season := range extended.Seasons {
 		if season.Number < 0 {
+			continue
+		}
+		// Only process seasons matching the primary season type
+		seasonType := strings.ToLower(strings.TrimSpace(season.Type.Type))
+		if seasonType == "" {
+			seasonType = strings.ToLower(strings.TrimSpace(season.Type.Name))
+		}
+		if seasonType != "" && seasonType != primarySeasonType {
 			continue
 		}
 		target := ensureSeason(season.Number)
@@ -1821,9 +1882,19 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			target.TVDBID = season.ID
 		}
 
-		// Use season name/overview from extended data (skip per-season translation calls for speed)
+		// Use translated season name/overview if available, fallback to extended data
 		seasonName := strings.TrimSpace(season.Name)
 		seasonOverview := strings.TrimSpace(season.Overview)
+
+		if trans, ok := seasonTranslations[season.ID]; ok {
+			if trans.name != "" {
+				seasonName = trans.name
+				log.Printf("[metadata] using translated season name tvdbId=%d season=%d lang=%s name=%q", tvdbID, season.Number, s.client.language, trans.name)
+			}
+			if trans.overview != "" {
+				seasonOverview = trans.overview
+			}
+		}
 
 		if seasonName != "" {
 			target.Name = seasonName

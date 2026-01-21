@@ -12,8 +12,9 @@ import { TvModal } from '@/components/TvModal';
 import FocusablePressable from '@/components/FocusablePressable';
 import { useUserProfiles } from '@/components/UserProfilesContext';
 import { useWatchlist } from '@/components/WatchlistContext';
+import { useWatchStatus } from '@/components/WatchStatusContext';
 import { useTrendingMovies, useTrendingTVShows } from '@/hooks/useApi';
-import { apiService, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem } from '@/services/api';
+import { apiService, ReleaseWindow, SeriesWatchState, Title, TrendingItem, type WatchlistItem, type WatchStatusItem } from '@/services/api';
 import { APP_VERSION } from '@/version';
 import RemoteControlManager from '@/services/remote-control/RemoteControlManager';
 import { SupportedKeys } from '@/services/remote-control/SupportedKeys';
@@ -231,6 +232,75 @@ function buildWarningMessage(context: string, rawMessage: string | null | undefi
 
 const isAndroidTV = Platform.isTV && Platform.OS === 'android';
 
+// Enrich titles with watch status data for the watchState badge
+// Returns isWatched for movies, watchState for series (none/partial/complete)
+function enrichWithWatchStatus<T extends { id: string; mediaType: string; percentWatched?: number }>(
+  titles: T[],
+  isWatched: (mediaType: string, id: string) => boolean,
+  watchStatusItems: WatchStatusItem[],
+  continueWatchingItems?: SeriesWatchState[],
+): (T & { isWatched?: boolean; watchState?: 'none' | 'partial' | 'complete' })[] {
+  return titles.map((title) => {
+    if (title.mediaType === 'movie') {
+      const movieWatched = isWatched('movie', title.id);
+      const percentWatched = title.percentWatched ?? 0;
+      // Determine watch state: complete if marked watched or >=90%, partial if has progress
+      const watchState: 'none' | 'partial' | 'complete' =
+        movieWatched || percentWatched >= 90 ? 'complete' : percentWatched > 0 ? 'partial' : 'none';
+      return {
+        ...title,
+        isWatched: movieWatched,
+        watchState,
+      };
+    }
+    if (title.mediaType === 'series' || title.mediaType === 'tv') {
+      // Check if series itself is marked watched
+      const seriesWatched = isWatched('series', title.id);
+
+      // Check for auto-complete using backend-provided episode counts
+      const cwItem = continueWatchingItems?.find((cw) => cw.seriesId === title.id);
+      const totalEpisodes = cwItem?.totalEpisodeCount ?? 0;
+      const watchedEpisodes = cwItem?.watchedEpisodeCount ?? 0;
+      const allEpisodesWatched = totalEpisodes > 0 && watchedEpisodes >= totalEpisodes;
+
+      // Check if any non-special episodes (season > 0) of this series are fully watched
+      const hasWatchedEpisodes = watchStatusItems.some(
+        (item) =>
+          item.mediaType === 'episode' &&
+          item.seriesId === title.id &&
+          item.watched &&
+          (item.seasonNumber ?? 0) > 0, // Exclude season 0 (specials)
+      );
+
+      // Check if series has partial progress from continue watching (episode in progress)
+      const hasPartialProgress =
+        cwItem &&
+        ((cwItem.percentWatched ?? 0) > 0 || // Has overall progress
+          (cwItem.resumePercent ?? 0) > 0 || // Has resume position
+          watchedEpisodes > 0 || // Has watched some episodes (from backend)
+          (cwItem.watchedEpisodes && Object.keys(cwItem.watchedEpisodes).length > 0)); // Has any watched episodes in map
+
+      // Determine watch state:
+      // - complete: series marked watched OR all released episodes watched
+      // - partial: has fully watched episodes OR has partial episode progress
+      // - none: no watch activity
+      const watchState: 'none' | 'partial' | 'complete' =
+        seriesWatched || allEpisodesWatched
+          ? 'complete'
+          : hasWatchedEpisodes || hasPartialProgress
+            ? 'partial'
+            : 'none';
+
+      return {
+        ...title,
+        isWatched: seriesWatched || allEpisodesWatched,
+        watchState,
+      };
+    }
+    return title;
+  });
+}
+
 // Debug logging for index page render/load analysis
 const DEBUG_INDEX_RENDERS = __DEV__ && false; // Set to true for render debugging
 const DEBUG_PERF = __DEV__ && false; // Performance profiling
@@ -316,6 +386,7 @@ function IndexScreen() {
     error: trendingTVShowsError,
     refetch: refetchTrendingTVShows,
   } = useTrendingTVShows(activeUserId ?? undefined, true, trendingTVHideUnreleased);
+  const { isWatched, items: watchStatusItems } = useWatchStatus();
   const safeAreaInsets = useSafeAreaInsets();
   // Use Reanimated's animated ref for UI thread scrolling
   const scrollViewRef = useAnimatedRef<Animated.ScrollView>();
@@ -795,6 +866,18 @@ function IndexScreen() {
     [userSettings?.display?.badgeVisibility, settings?.display?.badgeVisibility],
   );
 
+  // Only enrich titles with watch status when the badge is enabled
+  const shouldEnrichWatchStatus = useMemo(
+    () => badgeVisibility.includes('watchState'),
+    [badgeVisibility],
+  );
+
+  // Memoize watch state icon style to prevent prop identity changes on each render
+  const watchStateIconStyle = useMemo(
+    () => userSettings?.display?.watchStateIconStyle ?? settings?.display?.watchStateIconStyle ?? 'colored',
+    [userSettings?.display?.watchStateIconStyle, settings?.display?.watchStateIconStyle],
+  );
+
   // Cache series overviews for continue watching items
   const [seriesOverviews, setSeriesOverviews] = useState<Map<string, string>>(new Map());
 
@@ -1181,7 +1264,7 @@ function IndexScreen() {
   const customListTitles = useMemo(() => {
     const result: Record<string, (Title & { uniqueKey: string; collagePosters?: string[] })[]> = {};
     for (const [shelfId, items] of Object.entries(customListData)) {
-      const allTitles = items.map((item) => {
+      const titlesWithReleases = items.map((item) => {
         // Merge cached release data for movies
         const cachedReleases = item.title.mediaType === 'movie' ? movieReleases.get(item.title.id) : undefined;
         return {
@@ -1191,6 +1274,10 @@ function IndexScreen() {
           homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
         };
       });
+      // Enrich with watch status if badge is enabled
+      const allTitles = shouldEnrichWatchStatus
+        ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+        : titlesWithReleases;
       const shelf = customShelves.find((s) => s.id === shelfId);
       // Use filtered total for display, unfiltered total for explore card decision
       const filteredTotal = customListTotals[shelfId] ?? allTitles.length;
@@ -1234,12 +1321,12 @@ function IndexScreen() {
       }
     }
     return result;
-  }, [customListData, customListTotals, customListUnfilteredTotals, movieReleases, exploreCardPosition, customShelves]);
+  }, [customListData, customListTotals, customListUnfilteredTotals, movieReleases, exploreCardPosition, customShelves, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
   const watchlistTitles = useMemo(() => {
     const baseTitles = mapWatchlistToTitles(watchlistItems, watchlistYears);
     // Merge cached release data for movies
-    const allTitles = baseTitles.map((title) => {
+    const titlesWithReleases = baseTitles.map((title) => {
       if (title.mediaType === 'movie') {
         const cachedReleases = movieReleases.get(title.id);
         if (cachedReleases) {
@@ -1252,6 +1339,10 @@ function IndexScreen() {
       }
       return title;
     });
+    // Enrich with watch status if badge is enabled
+    const allTitles = shouldEnrichWatchStatus
+      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+      : titlesWithReleases;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -1276,11 +1367,11 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
   const continueWatchingTitles = useMemo(() => {
     const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
     // Merge cached release data for movies
-    const allTitles = baseTitles.map((title) => {
+    const titlesWithReleases = baseTitles.map((title) => {
       if (title.mediaType === 'movie') {
         const cachedReleases = movieReleases.get(title.id);
         if (cachedReleases) {
@@ -1293,6 +1384,10 @@ function IndexScreen() {
       }
       return title;
     });
+    // Enrich with watch status if badge is enabled
+    const allTitles = shouldEnrichWatchStatus
+      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+      : titlesWithReleases;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -1317,9 +1412,9 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition]);
+  }, [continueWatchingItems, seriesOverviews, watchlistItems, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems]);
   const trendingMovieTitles = useMemo(() => {
-    const allTitles =
+    const titlesWithReleases =
       trendingMovies?.map((item) => {
         // Merge cached release data if available
         const cachedReleases = movieReleases.get(item.title.id);
@@ -1330,6 +1425,10 @@ function IndexScreen() {
           homeRelease: item.title.homeRelease ?? cachedReleases?.homeRelease,
         };
       }) ?? [];
+    // Enrich with watch status if badge is enabled
+    const allTitles = shouldEnrichWatchStatus
+      ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
+      : titlesWithReleases;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -1354,14 +1453,18 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [trendingMovies, movieReleases, exploreCardPosition]);
+  }, [trendingMovies, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
   const trendingShowTitles = useMemo(() => {
-    const allTitles =
+    const baseTitles =
       trendingTVShows?.map((item) => ({
         ...item.title,
         uniqueKey: `show:${item.title.id}`,
       })) ?? [];
+    // Enrich with watch status if badge is enabled
+    const allTitles = shouldEnrichWatchStatus
+      ? enrichWithWatchStatus(baseTitles, isWatched, watchStatusItems, continueWatchingItems)
+      : baseTitles;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -1386,7 +1489,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [trendingTVShows, exploreCardPosition]);
+  }, [trendingTVShows, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
 
   const [focusedDesktopCard, setFocusedDesktopCard] = useState<CardData | null>(null);
   const [mobileHeroIndex, setMobileHeroIndex] = useState(0);
@@ -2218,6 +2321,7 @@ function IndexScreen() {
                       onItemPress={data.onItemPress}
                       onItemLongPress={data.onItemLongPress}
                       badgeVisibility={badgeVisibility}
+                      watchStateIconStyle={watchStateIconStyle}
                     />
                   </View>
                 );
@@ -2443,6 +2547,7 @@ function IndexScreen() {
                 registerShelfFlatListRef={registerShelfFlatListRef}
                 isInitialLoad={isInitialLoadRef.current}
                 badgeVisibility={badgeVisibility}
+                watchStateIconStyle={watchStateIconStyle}
                 onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
               />
             ))}
@@ -2681,6 +2786,7 @@ type VirtualizedShelfProps = {
   cardSpacing: number;
   shelfPadding: number;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
+  watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
   onFirstItemTagChange?: (tag: number | null) => void; // Report first card's native tag (for drawer focus)
 };
 

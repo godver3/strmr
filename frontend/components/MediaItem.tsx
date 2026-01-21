@@ -24,6 +24,7 @@ interface MediaItemProps {
   onFocus?: () => void;
   style?: StyleProp<ViewStyle>;
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus, watchState, unwatchedCount
+  watchStateIconStyle?: 'colored' | 'white'; // Icon color style: colored (green/yellow) or white
   useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigationFocusableView (faster on Android TV)
   autoFocus?: boolean; // Give this item initial focus (only works with useNativeFocus)
   nextFocusLeft?: number; // Native tag for left focus navigation (TV) - set to self to trap focus
@@ -37,7 +38,7 @@ const DEFAULT_BADGE_VISIBILITY = ['watchProgress'];
 // Check if a specific badge type should be shown
 const shouldShowBadge = (badgeType: string, visibility?: string[]): boolean => {
   // Only allow implemented badge types
-  const implementedBadges = ['watchProgress', 'releaseStatus'];
+  const implementedBadges = ['watchProgress', 'releaseStatus', 'watchState', 'unwatchedCount'];
   if (!implementedBadges.includes(badgeType)) {
     return false;
   }
@@ -87,27 +88,34 @@ const getSeriesStatusIcon = (status?: string): string | null => {
 };
 
 // Get watch state icon
+// Visual design: ● (full circle) = fully watched, ◐ (half circle) = partial
+// Note: Unwatched items (empty circle) are disabled - only show watched/partial states
 const getWatchStateIcon = (
   isWatched?: boolean,
   watchState?: 'none' | 'partial' | 'complete',
   mediaType?: string,
+  iconStyle?: 'colored' | 'white',
 ): { icon: string; color: string } | null => {
-  if (mediaType === 'series' && watchState) {
+  const useWhite = iconStyle === 'white';
+  const greenColor = useWhite ? '#ffffff' : '#4ade80';
+  const yellowColor = useWhite ? '#ffffff' : '#facc15';
+
+  // Use watchState for both movies and series when available
+  if (watchState) {
     switch (watchState) {
       case 'complete':
-        return { icon: '\u2713', color: '#4ade80' }; // Green checkmark
+        return { icon: '\u25CF', color: greenColor }; // Full circle - fully watched
       case 'partial':
-        return { icon: '\u25D0', color: '#facc15' }; // Yellow half circle
+        return { icon: '\u25D0', color: yellowColor }; // Half circle - partially watched
       case 'none':
-        return { icon: '\u25CB', color: '#9ca3af' }; // Gray empty circle
+        return null; // Don't show badge for unwatched
       default:
         return null;
     }
   }
+  // Fallback for movies without watchState (legacy: only isWatched boolean)
   if (mediaType === 'movie' && isWatched !== undefined) {
-    return isWatched
-      ? { icon: '\u2713', color: '#4ade80' } // Green checkmark
-      : { icon: '\u25CB', color: '#9ca3af' }; // Gray empty circle
+    return isWatched ? { icon: '\u25CF', color: greenColor } : null;
   }
   return null;
 };
@@ -289,7 +297,27 @@ const createStyles = (theme: NovaTheme) => {
       color: theme.colors.text.primary,
       fontWeight: '600',
     },
-    // Release status badge (top-left)
+    // Top-left badge container (stacks release status and watch state badges vertically)
+    topLeftBadgeContainer: {
+      position: 'absolute',
+      top: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
+      left: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
+      zIndex: 2,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      paddingHorizontal: Math.round(theme.spacing.sm * (isTV ? 1.25 * tvTextScale : 1)),
+      paddingVertical: Math.round(theme.spacing.xs * (isTV ? 1.25 * tvTextScale : 1)),
+      borderRadius: Math.round(theme.radius.sm * (isTV ? 1.25 * tvTextScale : 1)),
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: Math.round(2 * (isTV ? 1.25 * tvTextScale : 1)),
+    },
+    // Individual badge item style (no background, just layout)
+    topLeftBadgeItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: Math.round(4 * (isTV ? 1.25 * tvTextScale : 1)),
+    },
+    // Release status badge (legacy - kept for backwards compatibility, now uses topLeftBadge)
     releaseStatusBadge: {
       position: 'absolute',
       top: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
@@ -303,20 +331,7 @@ const createStyles = (theme: NovaTheme) => {
     releaseStatusIcon: {
       fontSize: Math.round(14 * (isTV ? 1.25 * tvTextScale : 1)),
     },
-    // Watch state badge (bottom-right corner, above the gradient)
-    watchStateBadge: {
-      position: 'absolute',
-      bottom: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1) + 48), // Above the info overlay
-      right: Math.round(theme.spacing.sm * (isAndroidTV ? 0.7 : 1)),
-      backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      paddingHorizontal: Math.round(theme.spacing.sm * (isTV ? 1.25 * tvTextScale : 1)),
-      paddingVertical: Math.round(theme.spacing.xs * (isTV ? 1.25 * tvTextScale : 1)),
-      borderRadius: Math.round(theme.radius.sm * (isTV ? 1.25 * tvTextScale : 1)),
-      zIndex: 2,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: Math.round(4 * (isTV ? 1.25 * tvTextScale : 1)),
-    },
+    // Watch state icon style
     watchStateIcon: {
       fontSize: Math.round(14 * (isTV ? 1.25 * tvTextScale : 1)),
     },
@@ -373,6 +388,7 @@ const MediaItem = memo(function MediaItem({
   onFocus,
   style,
   badgeVisibility,
+  watchStateIconStyle,
   useNativeFocus = false,
   autoFocus = false,
   nextFocusLeft,
@@ -416,7 +432,7 @@ const MediaItem = memo(function MediaItem({
 
   // Compute badge data
   const releaseIcon = title.mediaType === 'movie' ? getMovieReleaseIcon(title) : getSeriesStatusIcon(title.status);
-  const watchStateData = getWatchStateIcon(title.isWatched, title.watchState, title.mediaType);
+  const watchStateData = getWatchStateIcon(title.isWatched, title.watchState, title.mediaType, watchStateIconStyle);
 
   if (isCompact) {
     return (
@@ -465,21 +481,39 @@ const MediaItem = memo(function MediaItem({
               <Text style={styles.placeholderText}>No artwork available</Text>
             </View>
           )}
-          {/* Release status badge (top-left) - hide for special card types */}
+          {/* Top-left badges container (watch state + release status, stacked vertically) - hide for special card types */}
           {title.mediaType !== 'more' &&
             title.mediaType !== 'explore' &&
-            shouldShowBadge('releaseStatus', badgeVisibility) &&
-            releaseIcon &&
-            typeof releaseIcon === 'object' && (
-              <View style={styles.releaseStatusBadge}>
-                <MaterialCommunityIcons
-                  name={releaseIcon.name}
-                  size={styles.releaseStatusIcon.fontSize}
-                  color={releaseIcon.color}
-                />
+            ((shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && typeof releaseIcon === 'object') ||
+              ((shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
+                (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)))) && (
+              <View style={styles.topLeftBadgeContainer}>
+                {/* Watch state badge */}
+                {(shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
+                  (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
+                    <View style={styles.topLeftBadgeItem}>
+                      {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
+                        <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
+                      )}
+                      {shouldShowBadge('unwatchedCount', badgeVisibility) &&
+                        (title.mediaType === 'series' || title.mediaType === 'tv') &&
+                        title.unwatchedCount !== undefined &&
+                        title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
+                    </View>
+                  )}
+                {/* Release status badge */}
+                {shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && typeof releaseIcon === 'object' && (
+                  <View style={styles.topLeftBadgeItem}>
+                    <MaterialCommunityIcons
+                      name={releaseIcon.name}
+                      size={styles.releaseStatusIcon.fontSize}
+                      color={watchStateIconStyle === 'white' ? '#ffffff' : releaseIcon.color}
+                    />
+                  </View>
+                )}
               </View>
             )}
-          {/* Progress badge - hide if less than 5% */}
+          {/* Progress badge (top-right) - hide if less than 5% */}
           {title.mediaType !== 'more' &&
             title.mediaType !== 'explore' &&
             shouldShowBadge('watchProgress', badgeVisibility) &&
@@ -487,21 +521,6 @@ const MediaItem = memo(function MediaItem({
             title.percentWatched >= 5 && (
               <View style={styles.progressBadge}>
                 <Text style={styles.progressBadgeText}>{Math.round(title.percentWatched)}%</Text>
-              </View>
-            )}
-          {/* Watch state badge (bottom-right) */}
-          {title.mediaType !== 'more' &&
-            title.mediaType !== 'explore' &&
-            (shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
-            (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
-              <View style={styles.watchStateBadge}>
-                {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
-                  <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
-                )}
-                {shouldShowBadge('unwatchedCount', badgeVisibility) &&
-                  title.mediaType === 'series' &&
-                  title.unwatchedCount !== undefined &&
-                  title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
               </View>
             )}
           {/* Info overlay - hide for special card types (they have their own overlay) */}
@@ -571,21 +590,39 @@ const MediaItem = memo(function MediaItem({
           <Text style={styles.placeholderText}>No artwork available</Text>
         </View>
       )}
-      {/* Release status badge (top-left) - hide for special card types */}
+      {/* Top-left badges container (watch state + release status, stacked vertically) - hide for special card types */}
       {title.mediaType !== 'more' &&
         title.mediaType !== 'explore' &&
-        shouldShowBadge('releaseStatus', badgeVisibility) &&
-        releaseIcon &&
-        typeof releaseIcon === 'object' && (
-          <View style={styles.releaseStatusBadge}>
-            <MaterialCommunityIcons
-              name={releaseIcon.name}
-              size={styles.releaseStatusIcon.fontSize}
-              color={releaseIcon.color}
-            />
+        ((shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && typeof releaseIcon === 'object') ||
+          ((shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
+            (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)))) && (
+          <View style={styles.topLeftBadgeContainer}>
+            {/* Watch state badge */}
+            {(shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
+              (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
+                <View style={styles.topLeftBadgeItem}>
+                  {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
+                    <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
+                  )}
+                  {shouldShowBadge('unwatchedCount', badgeVisibility) &&
+                    (title.mediaType === 'series' || title.mediaType === 'tv') &&
+                    title.unwatchedCount !== undefined &&
+                    title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
+                </View>
+              )}
+            {/* Release status badge */}
+            {shouldShowBadge('releaseStatus', badgeVisibility) && releaseIcon && typeof releaseIcon === 'object' && (
+              <View style={styles.topLeftBadgeItem}>
+                <MaterialCommunityIcons
+                  name={releaseIcon.name}
+                  size={styles.releaseStatusIcon.fontSize}
+                  color={watchStateIconStyle === 'white' ? '#ffffff' : releaseIcon.color}
+                />
+              </View>
+            )}
           </View>
         )}
-      {/* Media type badge - hide for special card types */}
+      {/* Media type badge (top-right) - hide for special card types */}
       {title.mediaType && title.mediaType !== 'more' && title.mediaType !== 'explore' && (
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{title.mediaType === 'series' ? 'TV' : 'MOVIE'}</Text>
@@ -599,21 +636,6 @@ const MediaItem = memo(function MediaItem({
         title.percentWatched >= 5 && (
           <View style={styles.progressBadge}>
             <Text style={styles.progressBadgeText}>{Math.round(title.percentWatched)}%</Text>
-          </View>
-        )}
-      {/* Watch state badge (bottom-right) */}
-      {title.mediaType !== 'more' &&
-        title.mediaType !== 'explore' &&
-        (shouldShowBadge('watchState', badgeVisibility) || shouldShowBadge('unwatchedCount', badgeVisibility)) &&
-        (watchStateData || (title.unwatchedCount !== undefined && title.unwatchedCount > 0)) && (
-          <View style={styles.watchStateBadge}>
-            {shouldShowBadge('watchState', badgeVisibility) && watchStateData && (
-              <Text style={[styles.watchStateIcon, { color: watchStateData.color }]}>{watchStateData.icon}</Text>
-            )}
-            {shouldShowBadge('unwatchedCount', badgeVisibility) &&
-              title.mediaType === 'series' &&
-              title.unwatchedCount !== undefined &&
-              title.unwatchedCount > 0 && <Text style={styles.unwatchedCountText}>{title.unwatchedCount}</Text>}
           </View>
         )}
       {/* Overlay info to match Search page - hide for special card types */}

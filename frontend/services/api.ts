@@ -554,6 +554,9 @@ export interface SeriesWatchState {
   watchedEpisodes?: Record<string, EpisodeReference>;
   percentWatched?: number;
   resumePercent?: number;
+  // Episode counts for tracking series completion (excludes specials/season 0)
+  watchedEpisodeCount?: number;
+  totalEpisodeCount?: number;
 }
 
 export interface EpisodeWatchPayload {
@@ -735,6 +738,7 @@ export interface UserLiveTVSettings {
 
 export interface UserDisplaySettings {
   badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
+  watchStateIconStyle?: 'colored' | 'white'; // "colored" (default) = green/yellow, "white" = all white
 }
 
 export interface UserNetworkSettings {

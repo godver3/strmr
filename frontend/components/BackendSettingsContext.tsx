@@ -158,6 +158,7 @@ export interface BackendSubtitleSettings {
 
 export interface BackendDisplaySettings {
   badgeVisibility: string[]; // "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
+  watchStateIconStyle?: 'colored' | 'white'; // "colored" (default) = green/yellow, "white" = all white
 }
 
 export interface BackendNetworkSettings {

@@ -303,6 +303,9 @@ type DisplaySettings struct {
 	// BadgeVisibility controls which badges appear on media cards.
 	// Valid values: "watchProgress", "releaseStatus", "watchState", "unwatchedCount"
 	BadgeVisibility []string `json:"badgeVisibility"`
+	// WatchStateIconStyle controls the color of watch state icons.
+	// "colored" (default) = green/yellow circles, "white" = all white circles
+	WatchStateIconStyle string `json:"watchStateIconStyle"`
 }
 
 // SubtitleSettings defines subtitle provider configuration.
@@ -584,7 +587,8 @@ func DefaultSettings() Settings {
 			LoadingAnimationEnabled: true,
 		},
 		Display: DisplaySettings{
-			BadgeVisibility: []string{"watchProgress"},
+			BadgeVisibility:     []string{"watchProgress"},
+			WatchStateIconStyle: "colored",
 		},
 		Subtitles: SubtitleSettings{
 			OpenSubtitlesUsername: "",
@@ -928,6 +932,9 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill Display settings
 	if len(s.Display.BadgeVisibility) == 0 {
 		s.Display.BadgeVisibility = []string{"watchProgress"}
+	}
+	if s.Display.WatchStateIconStyle == "" {
+		s.Display.WatchStateIconStyle = "colored"
 	}
 
 	// Backfill Log settings

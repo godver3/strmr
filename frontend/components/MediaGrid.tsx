@@ -47,6 +47,7 @@ interface MediaGridProps {
   defaultFocusFirstItem?: boolean; // when entering from above, focus first item (TV)
   disableFocusScroll?: boolean; // disable programmatic scroll on focus (TV)
   badgeVisibility?: string[]; // Which badges to show on MediaItem cards
+  watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
   emptyMessage?: string; // Custom message when no items
   useNativeFocus?: boolean; // Use native Pressable focus instead of SpatialNavigation (faster on Android TV)
   useMinimalCards?: boolean; // Use ultra-simple cards for performance testing
@@ -380,6 +381,7 @@ const MediaGrid = React.memo(
     defaultFocusFirstItem = false,
     disableFocusScroll = false,
     badgeVisibility,
+    watchStateIconStyle,
     emptyMessage,
     useNativeFocus = false,
     useMinimalCards = false,
@@ -750,6 +752,7 @@ const MediaGrid = React.memo(
                     onPress={() => onItemPress?.(item)}
                     onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
                     badgeVisibility={badgeVisibility}
+                    watchStateIconStyle={watchStateIconStyle}
                     style={{ width: carouselCardWidth, height: cardHeight }}
                   />
                 </View>
@@ -816,6 +819,7 @@ const MediaGrid = React.memo(
                                 gridHandlers.onItemFocus(index);
                               }}
                               badgeVisibility={badgeVisibility}
+                              watchStateIconStyle={watchStateIconStyle}
                               useNativeFocus={true}
                               autoFocus={defaultFocusFirstItem && isFirstItem}
                               trapLeftFocus={isLeftmostColumn}
@@ -878,6 +882,7 @@ const MediaGrid = React.memo(
                             onPress={() => onItemPress?.(item)}
                             onFocus={() => scrollToRow(rowKey)}
                             badgeVisibility={badgeVisibility}
+                            watchStateIconStyle={watchStateIconStyle}
                           />
                         );
                         return (
@@ -925,6 +930,7 @@ const MediaGrid = React.memo(
       prevProps.layout === nextProps.layout &&
       prevProps.defaultFocusFirstItem === nextProps.defaultFocusFirstItem &&
       prevProps.badgeVisibility === nextProps.badgeVisibility &&
+      prevProps.watchStateIconStyle === nextProps.watchStateIconStyle &&
       prevProps.useNativeFocus === nextProps.useNativeFocus &&
       prevProps.useMinimalCards === nextProps.useMinimalCards &&
       prevProps.loadingMore === nextProps.loadingMore &&

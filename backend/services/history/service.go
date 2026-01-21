@@ -554,7 +554,6 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 			var nextEpisode *models.EpisodeReference
 
 			// Priority 1: In-progress episode (resume watching)
-			// For in-progress, we don't need full series details since we already have episode info
 			if t.inProgress != nil {
 				// The in-progress episode IS the next episode to watch
 				nextEpisode = &models.EpisodeReference{
@@ -574,39 +573,50 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 					NextEpisode: nextEpisode,
 				}
 
-				// Get lightweight series info (poster, backdrop, external IDs only - no episodes)
-				seriesInfo, err := s.getSeriesInfoWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
-				if err == nil && seriesInfo != nil {
+				// Get full series details for poster, backdrop, IDs, and episode counts
+				seriesDetails, err := s.getSeriesMetadataWithCache(ctx, t.seriesID, t.info.SeriesName, t.info.ExternalIDs)
+				if err == nil && seriesDetails != nil {
 					// Add overview from metadata
-					if seriesInfo.Overview != "" {
-						state.Overview = seriesInfo.Overview
+					if seriesDetails.Title.Overview != "" {
+						state.Overview = seriesDetails.Title.Overview
 					}
 					// Add poster/backdrop from metadata
-					if seriesInfo.Poster != nil {
-						state.PosterURL = seriesInfo.Poster.URL
+					if seriesDetails.Title.Poster != nil {
+						state.PosterURL = seriesDetails.Title.Poster.URL
 					}
-					if seriesInfo.Backdrop != nil {
-						state.BackdropURL = seriesInfo.Backdrop.URL
+					if seriesDetails.Title.Backdrop != nil {
+						state.BackdropURL = seriesDetails.Title.Backdrop.URL
 					}
 
 					// Enrich external IDs from metadata (prioritize metadata over history)
 					if state.ExternalIDs == nil {
 						state.ExternalIDs = make(map[string]string)
 					}
-					if seriesInfo.IMDBID != "" {
-						state.ExternalIDs["imdb"] = seriesInfo.IMDBID
+					if seriesDetails.Title.IMDBID != "" {
+						state.ExternalIDs["imdb"] = seriesDetails.Title.IMDBID
 					}
-					if seriesInfo.TMDBID > 0 {
-						state.ExternalIDs["tmdb"] = fmt.Sprintf("%d", seriesInfo.TMDBID)
+					if seriesDetails.Title.TMDBID > 0 {
+						state.ExternalIDs["tmdb"] = fmt.Sprintf("%d", seriesDetails.Title.TMDBID)
 					}
-					if seriesInfo.TVDBID > 0 {
-						state.ExternalIDs["tvdb"] = fmt.Sprintf("%d", seriesInfo.TVDBID)
+					if seriesDetails.Title.TVDBID > 0 {
+						state.ExternalIDs["tvdb"] = fmt.Sprintf("%d", seriesDetails.Title.TVDBID)
 					}
 
 					// Use metadata year if available
-					if seriesInfo.Year > 0 {
-						state.Year = seriesInfo.Year
+					if seriesDetails.Title.Year > 0 {
+						state.Year = seriesDetails.Title.Year
 					}
+
+					// Calculate episode counts for series completion tracking
+					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
+					// For in-progress, also count watched episodes from history
+					watchedCount := 0
+					for _, ep := range t.episodes {
+						if ep.SeasonNumber > 0 {
+							watchedCount++
+						}
+					}
+					state.WatchedEpisodeCount = watchedCount
 				}
 			} else if len(t.episodes) > 0 {
 				// Priority 2: Next unwatched episode after most recently completed
@@ -684,6 +694,10 @@ func (s *Service) buildContinueWatchingFromHistory(ctx context.Context, userID s
 					if seriesDetails.Title.Year > 0 {
 						state.Year = seriesDetails.Title.Year
 					}
+
+					// Calculate episode counts for series completion tracking
+					state.TotalEpisodeCount = countTotalEpisodes(seriesDetails)
+					state.WatchedEpisodeCount = countWatchedEpisodes(state.WatchedEpisodes)
 				}
 			} else {
 				// No episodes and no in-progress (shouldn't happen)
@@ -1233,6 +1247,52 @@ func (s *Service) saveLocked() error {
 
 func episodeKey(season, episode int) string {
 	return fmt.Sprintf("s%02de%02d", season, episode)
+}
+
+// countTotalEpisodes counts the total number of released episodes in a series,
+// excluding specials (season 0). Only counts episodes that have aired.
+func countTotalEpisodes(seriesDetails *models.SeriesDetails) int {
+	if seriesDetails == nil {
+		return 0
+	}
+	total := 0
+	now := time.Now()
+	for _, season := range seriesDetails.Seasons {
+		// Skip specials (season 0)
+		if season.Number == 0 {
+			continue
+		}
+		for _, ep := range season.Episodes {
+			// Only count episodes that have aired
+			if ep.AiredDate != "" {
+				if airDate, err := time.Parse("2006-01-02", ep.AiredDate); err == nil {
+					if airDate.Before(now) || airDate.Equal(now) {
+						total++
+					}
+				} else {
+					// If we can't parse the date, assume it's released
+					total++
+				}
+			} else {
+				// No air date means it might not be released yet, but if it has an ID it's likely out
+				// Use episodeCount from season as fallback indication
+				total++
+			}
+		}
+	}
+	return total
+}
+
+// countWatchedEpisodes counts how many non-special episodes have been watched.
+func countWatchedEpisodes(watchedEpisodes map[string]models.EpisodeReference) int {
+	count := 0
+	for _, ep := range watchedEpisodes {
+		// Exclude specials (season 0)
+		if ep.SeasonNumber > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 func normaliseEpisode(ref models.EpisodeReference) models.EpisodeReference {

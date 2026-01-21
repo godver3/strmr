@@ -11,6 +11,7 @@ import {
   SpatialNavigationFocusableView,
 } from '@/services/tv-navigation';
 import FocusablePressable from '@/components/FocusablePressable';
+import MarqueeText from '@/components/tv/MarqueeText';
 
 interface SeasonSelectorProps {
   visible: boolean;
@@ -129,7 +130,14 @@ export function SeasonSelector({ visible, onClose, seasons, onSeasonSelect, them
                                   handleItemLayout(index, y, height);
                                 }}>
                                 <View style={styles.seasonInfo}>
-                                  <Text style={styles.seasonTitle}>Season {season.number}</Text>
+                                  <MarqueeText
+                                    style={styles.seasonTitle}
+                                    containerStyle={styles.seasonTitleContainer}
+                                    focused={isFocused}
+                                    speed={30}
+                                    delay={400}>
+                                    {season.name || `Season ${season.number}`}
+                                  </MarqueeText>
                                   {season.episodes && season.episodes.length > 0 && (
                                     <Text style={styles.seasonMeta}>
                                       {season.episodes.length} episode{season.episodes.length !== 1 ? 's' : ''}
@@ -267,6 +275,9 @@ const createStyles = (theme: NovaTheme) => {
     },
     seasonInfo: {
       flex: 1,
+    },
+    seasonTitleContainer: {
+      maxWidth: Platform.isTV ? 400 : 200, // Truncate long season names, marquee scrolls on focus
     },
     seasonTitle: {
       ...theme.typography.label.md,

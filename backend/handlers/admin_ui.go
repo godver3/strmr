@@ -471,8 +471,18 @@ var SettingsSchema = map[string]interface{}{
 				"options": []map[string]interface{}{
 					{"value": "watchProgress", "label": "Watch Progress"},
 					{"value": "releaseStatus", "label": "Release Status"},
-					{"value": "watchState", "label": "Watch State (Coming Soon)", "disabled": true},
+					{"value": "watchState", "label": "Watch State"},
 					{"value": "unwatchedCount", "label": "Unwatched Episode Count (Coming Soon)", "disabled": true},
+				},
+			},
+			"watchStateIconStyle": map[string]interface{}{
+				"type":        "select",
+				"label":       "Badge Icon Style",
+				"description": "Color style for watch state and release status icons on media cards",
+				"order":       1,
+				"options": []map[string]interface{}{
+					{"value": "colored", "label": "Colored"},
+					{"value": "white", "label": "White"},
 				},
 			},
 		},
@@ -1399,7 +1409,8 @@ func (h *AdminUIHandler) GetUserSettings(w http.ResponseWriter, r *http.Request)
 			SelectedCategories: []string{},
 		},
 		Display: models.DisplaySettings{
-			BadgeVisibility: globalSettings.Display.BadgeVisibility,
+			BadgeVisibility:     globalSettings.Display.BadgeVisibility,
+			WatchStateIconStyle: globalSettings.Display.WatchStateIconStyle,
 		},
 	}
 
