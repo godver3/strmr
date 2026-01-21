@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { Image } from '@/components/Image';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +11,49 @@ interface CastSectionProps {
   theme: NovaTheme;
   onCastMemberPress?: (actor: CastMember) => void;
 }
+
+// Individual actor card with error handling for image loading
+const ActorCard = memo(function ActorCard({
+  actor,
+  styles,
+  theme,
+  onPress,
+}: {
+  actor: CastMember;
+  styles: ReturnType<typeof createCastStyles>;
+  theme: NovaTheme;
+  onPress?: () => void;
+}) {
+  const [imageError, setImageError] = useState(false);
+  const handleImageError = useCallback(() => setImageError(true), []);
+
+  const showPlaceholder = !actor.profileUrl || imageError;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.actorCard, pressed && styles.actorCardPressed]}>
+      {showPlaceholder ? (
+        <View style={[styles.actorPhoto, styles.actorPhotoPlaceholder]}>
+          <Ionicons name="person" size={32} color={theme.colors.text.muted} />
+        </View>
+      ) : (
+        <Image
+          source={{ uri: actor.profileUrl }}
+          style={styles.actorPhoto}
+          contentFit="cover"
+          onError={handleImageError}
+        />
+      )}
+      <Text style={styles.actorName} numberOfLines={2}>
+        {actor.name}
+      </Text>
+      <Text style={styles.characterName} numberOfLines={2}>
+        {actor.character}
+      </Text>
+    </Pressable>
+  );
+});
 
 const CastSection = memo(function CastSection({ credits, isLoading, theme, onCastMemberPress }: CastSectionProps) {
   const styles = useMemo(() => createCastStyles(theme), [theme]);
@@ -42,24 +85,13 @@ const CastSection = memo(function CastSection({ credits, isLoading, theme, onCas
         contentContainerStyle={styles.scrollContent}
         style={styles.scrollView}>
         {topCast.map((actor) => (
-          <Pressable
+          <ActorCard
             key={actor.id}
+            actor={actor}
+            styles={styles}
+            theme={theme}
             onPress={() => onCastMemberPress?.(actor)}
-            style={({ pressed }) => [styles.actorCard, pressed && styles.actorCardPressed]}>
-            {actor.profileUrl ? (
-              <Image source={{ uri: actor.profileUrl }} style={styles.actorPhoto} contentFit="cover" />
-            ) : (
-              <View style={[styles.actorPhoto, styles.actorPhotoPlaceholder]}>
-                <Ionicons name="person" size={32} color={theme.colors.text.muted} />
-              </View>
-            )}
-            <Text style={styles.actorName} numberOfLines={2}>
-              {actor.name}
-            </Text>
-            <Text style={styles.characterName} numberOfLines={2}>
-              {actor.character}
-            </Text>
-          </Pressable>
+          />
         ))}
       </ScrollView>
     </View>

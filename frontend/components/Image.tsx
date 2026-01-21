@@ -18,10 +18,10 @@ const DEFAULT_CACHE_POLICY = Platform.isTV || isAndroid ? 'disk' : 'memory-disk'
 // DEBUG: Set to true to disable all images for performance testing
 const DEBUG_DISABLE_IMAGES = __DEV__ && false;
 
-// Image proxy configuration to reduce memory usage
+// Image proxy configuration to reduce memory usage and enable error logging
 // When enabled, TMDB images are routed through the backend which resizes and caches them
-// Enable for TV (limited memory) and Android (emulator/device performance)
-const USE_IMAGE_PROXY = Platform.isTV || isAndroid;
+// Enabled for all platforms to provide consistent behavior and backend error visibility
+const USE_IMAGE_PROXY = true;
 const IMAGE_PROXY_QUALITY = 80; // JPEG quality
 // Dynamic max widths based on image type - backdrops/heroes need higher resolution
 const IMAGE_PROXY_MAX_WIDTH_POSTER = 500; // Posters are displayed smaller

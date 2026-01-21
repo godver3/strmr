@@ -3,7 +3,7 @@
  * Uses spatial navigation for proper integration with other rows
  */
 
-import React, { memo, useCallback, useMemo } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Image } from '../Image';
 import { Ionicons } from '@expo/vector-icons';
@@ -36,6 +36,39 @@ interface TVCastSectionProps {
   onCastMemberPress?: (actor: CastMember) => void;
 }
 
+// Separate component for cast photo with error handling
+const CastPhoto = memo(function CastPhoto({
+  profileUrl,
+  styles,
+  theme,
+}: {
+  profileUrl?: string;
+  styles: ReturnType<typeof createStyles>;
+  theme: NovaTheme;
+}) {
+  const [imageError, setImageError] = useState(false);
+  const handleImageError = useCallback(() => setImageError(true), []);
+
+  const showPlaceholder = !profileUrl || imageError;
+
+  if (showPlaceholder) {
+    return (
+      <View style={[styles.photo, styles.photoPlaceholder]}>
+        <Ionicons name="person" size={tvScale(48)} color={theme.colors.text.muted} />
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri: profileUrl }}
+      style={styles.photo}
+      contentFit="cover"
+      onError={handleImageError}
+    />
+  );
+});
+
 const TVCastSection = memo(function TVCastSection({
   credits,
   isLoading,
@@ -63,13 +96,7 @@ const TVCastSection = memo(function TVCastSection({
           onSelect={() => onCastMemberPress?.(actor)}>
           {({ isFocused }: { isFocused: boolean }) => (
             <View style={[styles.card, isFocused && styles.cardFocused]}>
-              {actor.profileUrl ? (
-                <Image source={{ uri: actor.profileUrl }} style={styles.photo} contentFit="cover" />
-              ) : (
-                <View style={[styles.photo, styles.photoPlaceholder]}>
-                  <Ionicons name="person" size={tvScale(48)} color={theme.colors.text.muted} />
-                </View>
-              )}
+              <CastPhoto profileUrl={actor.profileUrl} styles={styles} theme={theme} />
               <View style={styles.textContainer}>
                 <MarqueeText style={styles.actorName} focused={isFocused}>
                   {actor.name}
