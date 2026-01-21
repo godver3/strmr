@@ -4813,6 +4813,17 @@ export default function DetailsScreen() {
           loading={watchlistBusy}
           style={[styles.iconActionButton, isWatchlisted && styles.watchlistActionButtonActive]}
         />
+        {!isSeries && (
+          <FocusablePressable
+            focusKey="watch-state-toggle-mobile"
+            icon={isWatched ? 'eye' : 'eye-outline'}
+            accessibilityLabel={watchStateButtonLabel}
+            onSelect={handleToggleWatched}
+            loading={watchlistBusy}
+            style={[styles.iconActionButton, isWatched && styles.watchStateButtonActive]}
+            disabled={watchlistBusy}
+          />
+        )}
         {(trailersLoading || hasAvailableTrailer) && (
           <FocusablePressable
             focusKey="watch-trailer-mobile"
