@@ -93,17 +93,49 @@ const HERO_PLACEHOLDER: HeroContent = {
 const EXPLORE_CARD_ID_PREFIX = '__explore__';
 const MAX_SHELF_ITEMS_ON_HOME = 20;
 
-// Helper to pick N random posters from displayed items
-function pickRandomPosters<T>(items: T[], getPoster: (item: T) => string | undefined, count: number = 4): string[] {
+// Simple hash function for seeded randomness
+function simpleHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
+// Seeded pseudo-random number generator (mulberry32)
+function seededRandom(seed: number): () => number {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Helper to pick N random posters from displayed items (deterministic based on content)
+function pickRandomPosters<T>(
+  items: T[],
+  getPoster: (item: T) => string | undefined,
+  count: number = 4,
+  shelfId: string = ''
+): string[] {
   const displayedItems = items.slice(0, MAX_SHELF_ITEMS_ON_HOME);
   const itemsWithPosters = displayedItems.filter((item) => getPoster(item));
   if (itemsWithPosters.length <= count) {
     return itemsWithPosters.map((item) => getPoster(item)!);
   }
-  // Fisher-Yates shuffle to pick random items
+  // Create a seed based on shelfId and the posters themselves for stability
+  const posterUrls = itemsWithPosters.map((item) => getPoster(item)!);
+  const seedString = shelfId + posterUrls.slice(0, 10).join('');
+  const seed = simpleHash(seedString);
+  const random = seededRandom(seed);
+
+  // Fisher-Yates shuffle with seeded random for deterministic selection
   const shuffled = [...itemsWithPosters];
   for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   return shuffled.slice(0, count).map((item) => getPoster(item)!);
@@ -117,8 +149,8 @@ function createExploreCard(shelfId: string, allCards: CardData[], overrideRemain
   const totalCount =
     overrideRemainingCount !== undefined ? overrideRemainingCount + MAX_SHELF_ITEMS_ON_HOME : allCards.length;
 
-  // Pick 4 random posters from displayed items
-  const collagePosters = pickRandomPosters(allCards, (card) => card.cardImage, 4);
+  // Pick 4 posters from displayed items (deterministic based on shelfId and content)
+  const collagePosters = pickRandomPosters(allCards, (card) => card.cardImage, 4, shelfId);
 
   return {
     id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
@@ -1297,8 +1329,8 @@ function IndexScreen() {
         result[shelfId] = allTitles.slice(0, shelfLimit);
       } else {
         // Show explore card with remaining filtered items count
-        // Pick random posters from displayed items
-        const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
+        // Pick posters from displayed items (deterministic)
+        const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, shelfId);
         const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
           id: `${EXPLORE_CARD_ID_PREFIX}${shelfId}`,
           name: 'Explore',
@@ -1347,8 +1379,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick random posters from displayed items
-    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
+    // Pick posters from displayed items (deterministic)
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, 'watchlist');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}watchlist`,
       name: 'Explore',
@@ -1392,8 +1424,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick random posters from displayed items
-    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
+    // Pick posters from displayed items (deterministic)
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, 'continue-watching');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}continue-watching`,
       name: 'Explore',
@@ -1433,8 +1465,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick random posters from displayed items
-    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
+    // Pick posters from displayed items (deterministic)
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, 'trending-movies');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[]; displayYear?: string } = {
       id: `${EXPLORE_CARD_ID_PREFIX}trending-movies`,
       name: 'Explore',
@@ -1469,8 +1501,8 @@ function IndexScreen() {
       return allTitles;
     }
     const remainingCount = allTitles.length - MAX_SHELF_ITEMS_ON_HOME;
-    // Pick random posters from displayed items
-    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4);
+    // Pick posters from displayed items (deterministic)
+    const collagePosters = pickRandomPosters(allTitles, (title) => title?.poster?.url, 4, 'trending-shows');
     const exploreTitle: Title & { uniqueKey: string; collagePosters?: string[] } = {
       id: `${EXPLORE_CARD_ID_PREFIX}trending-shows`,
       name: 'Explore',
