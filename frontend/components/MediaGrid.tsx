@@ -909,7 +909,7 @@ const MediaGrid = React.memo(
         // @ts-ignore - TV-specific props to prevent native focus handling
         focusable={false}
         isTVSelectable={false}>
-        <Text style={styles.title}>{title}</Text>
+        {title ? <Text style={styles.title}>{title}</Text> : null}
         {renderContent()}
       </View>
     );
