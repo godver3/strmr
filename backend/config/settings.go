@@ -306,6 +306,8 @@ type DisplaySettings struct {
 	// WatchStateIconStyle controls the color of watch state icons.
 	// "colored" (default) = green/yellow circles, "white" = all white circles
 	WatchStateIconStyle string `json:"watchStateIconStyle"`
+	// HideWatched filters out fully watched content from trending shelves and custom lists.
+	HideWatched bool `json:"hideWatched,omitempty"`
 }
 
 // SubtitleSettings defines subtitle provider configuration.

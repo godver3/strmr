@@ -416,6 +416,11 @@ function IndexScreen() {
     return shelf?.hideUnreleased ?? false;
   }, [userSettings?.homeShelves?.shelves, settings?.homeShelves?.shelves]);
 
+  // Extract universal hideWatched setting from display settings
+  const hideWatched = useMemo(() => {
+    return settings?.display?.hideWatched ?? false;
+  }, [settings?.display?.hideWatched]);
+
   const {
     items: watchlistItems,
     loading: watchlistLoading,
@@ -434,12 +439,12 @@ function IndexScreen() {
     data: trendingMovies,
     error: trendingMoviesError,
     refetch: refetchTrendingMovies,
-  } = useTrendingMovies(activeUserId ?? undefined, true, trendingMoviesHideUnreleased);
+  } = useTrendingMovies(activeUserId ?? undefined, true, trendingMoviesHideUnreleased, hideWatched);
   const {
     data: trendingTVShows,
     error: trendingTVShowsError,
     refetch: refetchTrendingTVShows,
-  } = useTrendingTVShows(activeUserId ?? undefined, true, trendingTVHideUnreleased);
+  } = useTrendingTVShows(activeUserId ?? undefined, true, trendingTVHideUnreleased, hideWatched);
   const { isWatched, items: watchStatusItems } = useWatchStatus();
   const safeAreaInsets = useSafeAreaInsets();
   // Use Reanimated's animated ref for UI thread scrolling
@@ -538,8 +543,8 @@ function IndexScreen() {
         if (!shelf.listUrl) continue;
         // Use shelf's configured limit if set, otherwise use default
         const itemLimit = shelf.limit && shelf.limit > 0 ? shelf.limit : MAX_SHELF_ITEMS_ON_HOME;
-        // Create cache key that includes URL, limit, and hideUnreleased so changes trigger re-fetch
-        const cacheKey = `${shelf.listUrl}:${itemLimit}:${shelf.hideUnreleased ?? false}`;
+        // Create cache key that includes URL, limit, hideUnreleased, hideWatched, and userId so changes trigger re-fetch
+        const cacheKey = `${shelf.listUrl}:${itemLimit}:${shelf.hideUnreleased ?? false}:${hideWatched}:${activeUserId ?? ''}`;
         // Skip if we've already fetched this URL with these parameters
         if (fetchedListUrlsRef.current.has(cacheKey)) continue;
 
@@ -549,9 +554,11 @@ function IndexScreen() {
         try {
           const { items, total, unfilteredTotal } = await apiService.getCustomList(
             shelf.listUrl,
+            activeUserId ?? undefined, // userId for hideWatched filtering
             itemLimit,
             undefined, // offset
             shelf.hideUnreleased,
+            hideWatched,
           );
           setCustomListData((prev) => ({ ...prev, [shelf.id]: items }));
           setCustomListTotals((prev) => ({ ...prev, [shelf.id]: total }));
@@ -566,7 +573,7 @@ function IndexScreen() {
     };
 
     void fetchCustomLists();
-  }, [customShelves]);
+  }, [customShelves, activeUserId, hideWatched]);
 
   const backendLoadError = useMemo(() => {
     if (settingsLoading || settingsError) {

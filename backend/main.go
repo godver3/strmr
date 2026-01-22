@@ -307,6 +307,9 @@ func main() {
 	traktScrobbler.SetUserService(userService) // For per-profile Trakt account lookup
 	historyService.SetTraktScrobbler(traktScrobbler)
 
+	// Wire up history service to metadata handler for hideWatched filtering
+	metadataHandler.SetHistoryService(historyService)
+
 	historyHandler := handlers.NewHistoryHandler(historyService, userService, *demoMode)
 
 	// Create prequeue handler now that history service is available

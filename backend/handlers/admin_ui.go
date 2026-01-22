@@ -485,6 +485,12 @@ var SettingsSchema = map[string]interface{}{
 					{"value": "white", "label": "White"},
 				},
 			},
+			"hideWatched": map[string]interface{}{
+				"type":        "boolean",
+				"label":       "Hide Watched Content",
+				"description": "Filter out fully watched movies and TV shows from trending shelves and custom lists on the home page",
+				"order":       2,
+			},
 		},
 	},
 	"metadata": map[string]interface{}{

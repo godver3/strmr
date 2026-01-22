@@ -1072,12 +1072,13 @@ class ApiService {
   // Discover trending movies
   // If limit is provided, returns paginated results with total count
   // If no limit, returns all items for backward compatibility
-  // unfilteredTotal is returned when hideUnreleased is true (for explore card logic)
+  // unfilteredTotal is returned when hideUnreleased or hideWatched is true (for explore card logic)
   async getTrendingMovies(
     userId?: string,
     limit?: number,
     offset?: number,
     hideUnreleased?: boolean,
+    hideWatched?: boolean,
   ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ type: 'movie' });
     if (userId) {
@@ -1091,6 +1092,9 @@ class ApiService {
     }
     if (hideUnreleased) {
       params.set('hideUnreleased', 'true');
+    }
+    if (hideWatched) {
+      params.set('hideWatched', 'true');
     }
     // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
     const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
@@ -1107,12 +1111,13 @@ class ApiService {
   // Discover trending TV shows
   // If limit is provided, returns paginated results with total count
   // If no limit, returns all items for backward compatibility
-  // unfilteredTotal is returned when hideUnreleased is true (for explore card logic)
+  // unfilteredTotal is returned when hideUnreleased or hideWatched is true (for explore card logic)
   async getTrendingTVShows(
     userId?: string,
     limit?: number,
     offset?: number,
     hideUnreleased?: boolean,
+    hideWatched?: boolean,
   ): Promise<TrendingItem[] | { items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ type: 'series' });
     if (userId) {
@@ -1126,6 +1131,9 @@ class ApiService {
     }
     if (hideUnreleased) {
       params.set('hideUnreleased', 'true');
+    }
+    if (hideWatched) {
+      params.set('hideWatched', 'true');
     }
     // New API returns { items, total, unfilteredTotal? }, but we need backward compatibility
     const response = await this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
@@ -1142,14 +1150,19 @@ class ApiService {
   // Get custom MDBList items
   // If limit is provided, only that many items will be enriched with metadata
   // Returns items and total count for pagination
-  // unfilteredTotal is returned when hideUnreleased is true (for explore card logic)
+  // unfilteredTotal is returned when hideUnreleased or hideWatched is true (for explore card logic)
   async getCustomList(
     listUrl: string,
+    userId?: string,
     limit?: number,
     offset?: number,
     hideUnreleased?: boolean,
+    hideWatched?: boolean,
   ): Promise<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }> {
     const params = new URLSearchParams({ url: listUrl });
+    if (userId) {
+      params.set('userId', userId);
+    }
     if (limit && limit > 0) {
       params.set('limit', limit.toString());
     }
@@ -1158,6 +1171,9 @@ class ApiService {
     }
     if (hideUnreleased) {
       params.set('hideUnreleased', 'true');
+    }
+    if (hideWatched) {
+      params.set('hideWatched', 'true');
     }
     return this.request<{ items: TrendingItem[]; total: number; unfilteredTotal?: number }>(
       `/lists/custom?${params.toString()}`,

@@ -323,6 +323,9 @@ export default function WatchlistScreen() {
   const isTrendingTV = shelfId === 'trending-tv' || shelfId === 'trending-shows';
   const needsProgressiveLoading = isTrendingMovies || isTrendingTV || isCustomList;
 
+  // Universal hideWatched setting from display settings
+  const hideWatched = settings?.display?.hideWatched ?? false;
+
   // Fetch explore data with progressive loading
   const fetchExploreData = useCallback(
     async (offset: number, limit: number, isInitial: boolean) => {
@@ -347,6 +350,7 @@ export default function WatchlistScreen() {
             limit,
             offset,
             shelfConfig?.hideUnreleased,
+            hideWatched,
           );
           if ('items' in response) {
             items = response.items;
@@ -358,6 +362,7 @@ export default function WatchlistScreen() {
             limit,
             offset,
             shelfConfig?.hideUnreleased,
+            hideWatched,
           );
           if ('items' in response) {
             items = response.items;
@@ -366,9 +371,11 @@ export default function WatchlistScreen() {
         } else if (isCustomList && shelfConfig?.listUrl) {
           const response = await apiService.getCustomList(
             shelfConfig.listUrl,
+            activeUserId ?? undefined,
             limit,
             offset,
             shelfConfig?.hideUnreleased,
+            hideWatched,
           );
           items = response.items;
           total = response.total;
@@ -396,6 +403,7 @@ export default function WatchlistScreen() {
       isCustomList,
       shelfConfig?.listUrl,
       shelfConfig?.hideUnreleased,
+      hideWatched,
       activeUserId,
     ],
   );

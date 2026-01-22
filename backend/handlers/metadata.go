@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -42,10 +43,16 @@ type userSettingsProvider interface {
 	Get(userID string) (*models.UserSettings, error)
 }
 
+// historyServiceInterface provides access to watch history for filtering.
+type historyServiceInterface interface {
+	GetWatchHistoryItem(userID, mediaType, itemID string) (*models.WatchHistoryItem, error)
+}
+
 type MetadataHandler struct {
-	Service      metadataService
-	CfgManager   *config.Manager
-	UserSettings userSettingsProvider
+	Service        metadataService
+	CfgManager     *config.Manager
+	UserSettings   userSettingsProvider
+	HistoryService historyServiceInterface
 }
 
 func NewMetadataHandler(s metadataService, cfgManager *config.Manager) *MetadataHandler {
@@ -55,6 +62,11 @@ func NewMetadataHandler(s metadataService, cfgManager *config.Manager) *Metadata
 // SetUserSettingsProvider sets the user settings provider for per-user settings.
 func (h *MetadataHandler) SetUserSettingsProvider(provider userSettingsProvider) {
 	h.UserSettings = provider
+}
+
+// SetHistoryService sets the history service for filtering watched content.
+func (h *MetadataHandler) SetHistoryService(service historyServiceInterface) {
+	h.HistoryService = service
 }
 
 // DiscoverNewResponse wraps trending items with total count for pagination
@@ -68,6 +80,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 	mediaType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
+	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
 
 	// Parse optional pagination parameters
 	limit := 0
@@ -123,6 +136,11 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 		items = filterUnreleasedItems(items)
 	}
 
+	// Apply watched filter if requested (requires userID and history service)
+	if hideWatched && userID != "" && h.HistoryService != nil {
+		items = filterWatchedItems(items, userID, h.HistoryService)
+	}
+
 	// Apply pagination
 	total := len(items)
 	if offset > 0 {
@@ -138,7 +156,7 @@ func (h *MetadataHandler) DiscoverNew(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := DiscoverNewResponse{Items: items, Total: total}
-	if hideUnreleased {
+	if hideUnreleased || hideWatched {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
 	json.NewEncoder(w).Encode(resp)
@@ -662,6 +680,75 @@ func filterUnreleasedItems(items []models.TrendingItem) []models.TrendingItem {
 	return result
 }
 
+// filterWatchedItems removes items that have been fully watched by the user.
+// For movies: filters out items where WatchHistoryItem.Watched == true.
+// For series: filters out items where the series-level WatchHistoryItem.Watched == true.
+// Partially watched items (with playback progress but not marked as watched) are NOT filtered.
+func filterWatchedItems(items []models.TrendingItem, userID string, historySvc historyServiceInterface) []models.TrendingItem {
+	if userID == "" || historySvc == nil {
+		return items // Can't filter without user context
+	}
+
+	result := make([]models.TrendingItem, 0, len(items))
+	filteredCount := 0
+	for _, item := range items {
+		// Build item ID for watch history lookup
+		itemID := buildItemIDForHistory(item)
+		if itemID == "" {
+			// Can't determine ID, include by default
+			result = append(result, item)
+			continue
+		}
+
+		mediaType := item.Title.MediaType
+		if mediaType == "" {
+			// Unknown type - include by default
+			result = append(result, item)
+			continue
+		}
+
+		// Check if item is marked as watched
+		watchItem, _ := historySvc.GetWatchHistoryItem(userID, mediaType, itemID)
+		if watchItem == nil || !watchItem.Watched {
+			// Not watched or not found - include it
+			result = append(result, item)
+		} else {
+			filteredCount++
+			if filteredCount <= 3 {
+				log.Printf("[hideWatched] filtered %s: %s (itemID=%s)", mediaType, item.Title.Name, itemID)
+			}
+		}
+	}
+	log.Printf("[hideWatched] filter result: %d/%d items kept (filtered %d)", len(result), len(items), filteredCount)
+	return result
+}
+
+// buildItemIDForHistory constructs the item ID used in watch history from a TrendingItem.
+// Format: "tmdb:movie:12345" or "tvdb:123456" or "tmdb:tv:67890"
+func buildItemIDForHistory(item models.TrendingItem) string {
+	// Prefer TVDB ID for series (matches the storage format used by history service)
+	if item.Title.MediaType == "series" && item.Title.TVDBID > 0 {
+		return fmt.Sprintf("tvdb:%d", item.Title.TVDBID)
+	}
+	// For movies, prefer TMDB ID
+	if item.Title.MediaType == "movie" && item.Title.TMDBID > 0 {
+		return fmt.Sprintf("tmdb:movie:%d", item.Title.TMDBID)
+	}
+	// Fallback to TMDB for series
+	if item.Title.MediaType == "series" && item.Title.TMDBID > 0 {
+		return fmt.Sprintf("tmdb:tv:%d", item.Title.TMDBID)
+	}
+	// Fallback to TVDB for movies
+	if item.Title.MediaType == "movie" && item.Title.TVDBID > 0 {
+		return fmt.Sprintf("tvdb:movie:%d", item.Title.TVDBID)
+	}
+	// Use item ID if available
+	if item.Title.ID != "" {
+		return item.Title.ID
+	}
+	return ""
+}
+
 // CustomList fetches items from a custom MDBList URL
 func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 	listURL := strings.TrimSpace(r.URL.Query().Get("url"))
@@ -672,7 +759,9 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID := strings.TrimSpace(r.URL.Query().Get("userId"))
 	hideUnreleased := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideUnreleased"))) == "true"
+	hideWatched := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("hideWatched"))) == "true"
 
 	// Parse optional pagination parameters (0 = no limit/offset)
 	limit := 0
@@ -702,10 +791,10 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		listURL = listURL + "/json"
 	}
 
-	// When hideUnreleased is true, we need ALL items to get accurate filtered count
+	// When hideUnreleased or hideWatched is true, we need ALL items to get accurate filtered count
 	// Otherwise, fetch only what we need for pagination
 	fetchLimit := 0 // 0 = fetch all
-	if !hideUnreleased {
+	if !hideUnreleased && !hideWatched {
 		if limit > 0 && offset > 0 {
 			fetchLimit = limit + offset
 		} else if limit > 0 {
@@ -730,6 +819,12 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 		total = len(items) // This is now accurate since we fetched all items
 	}
 
+	// Apply watched filter if requested (requires userID and history service)
+	if hideWatched && userID != "" && h.HistoryService != nil {
+		items = filterWatchedItems(items, userID, h.HistoryService)
+		total = len(items)
+	}
+
 	// Apply offset
 	if offset > 0 {
 		if offset >= len(items) {
@@ -746,7 +841,7 @@ func (h *MetadataHandler) CustomList(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := CustomListResponse{Items: items, Total: total}
-	if hideUnreleased {
+	if hideUnreleased || hideWatched {
 		resp.UnfilteredTotal = unfilteredTotal
 	}
 	json.NewEncoder(w).Encode(resp)

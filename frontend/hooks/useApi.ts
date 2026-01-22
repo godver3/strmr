@@ -30,6 +30,7 @@ export function useTrendingMovies(
   userId?: string | null,
   enabled = true,
   hideUnreleased = false,
+  hideWatched = false,
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<TrendingItem[] | null>(null);
@@ -44,14 +45,20 @@ export function useTrendingMovies(
       setLoading(true);
       setError(null);
       // Without limit, getTrendingMovies returns TrendingItem[]
-      const result = await apiService.getTrendingMovies(userId ?? undefined, undefined, undefined, hideUnreleased);
+      const result = await apiService.getTrendingMovies(
+        userId ?? undefined,
+        undefined,
+        undefined,
+        hideUnreleased,
+        hideWatched,
+      );
       setData(result as TrendingItem[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trending movies');
     } finally {
       setLoading(false);
     }
-  }, [isReady, userId, enabled, hideUnreleased]);
+  }, [isReady, userId, enabled, hideUnreleased, hideWatched]);
 
   useEffect(() => {
     if (!isReady || !enabled) {
@@ -70,6 +77,7 @@ export function useTrendingTVShows(
   userId?: string | null,
   enabled = true,
   hideUnreleased = false,
+  hideWatched = false,
 ): UseApiState<TrendingItem[]> {
   const { backendUrl, isReady } = useBackendSettings();
   const [data, setData] = useState<TrendingItem[] | null>(null);
@@ -84,14 +92,20 @@ export function useTrendingTVShows(
       setLoading(true);
       setError(null);
       // Without limit, getTrendingTVShows returns TrendingItem[]
-      const result = await apiService.getTrendingTVShows(userId ?? undefined, undefined, undefined, hideUnreleased);
+      const result = await apiService.getTrendingTVShows(
+        userId ?? undefined,
+        undefined,
+        undefined,
+        hideUnreleased,
+        hideWatched,
+      );
       setData(result as TrendingItem[]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch trending TV shows');
     } finally {
       setLoading(false);
     }
-  }, [isReady, userId, enabled, hideUnreleased]);
+  }, [isReady, userId, enabled, hideUnreleased, hideWatched]);
 
   useEffect(() => {
     if (!isReady || !enabled) {
