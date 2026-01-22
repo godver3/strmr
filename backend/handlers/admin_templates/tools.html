@@ -1889,6 +1889,7 @@
             updateTraktStatusBadge();
             updateTraktHistorySection();
             updateTraktWatchlistSection();
+            renderProfileTraktLinking();
         } catch (err) {
             console.error('Failed to load Trakt accounts:', err);
         }
