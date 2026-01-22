@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -503,12 +504,16 @@ type PlexHomeUser struct {
 func (c *Client) GetHomeUsers(authToken string) ([]PlexHomeUser, error) {
 	servers, err := c.GetOwnedServers(authToken)
 	if err != nil {
+		log.Printf("[plex] Failed to get owned servers: %v", err)
 		return nil, err
 	}
 
 	if len(servers) == 0 {
+		log.Printf("[plex] No online owned servers found for user listing")
 		return nil, fmt.Errorf("no online owned Plex servers found")
 	}
+
+	log.Printf("[plex] Fetching users from %d server(s)", len(servers))
 
 	// Use a map to dedupe users across servers (by ID)
 	userMap := make(map[int]PlexHomeUser)
@@ -516,8 +521,10 @@ func (c *Client) GetHomeUsers(authToken string) ([]PlexHomeUser, error) {
 	for _, server := range servers {
 		users, err := c.GetServerUsers(server)
 		if err != nil {
+			log.Printf("[plex] Failed to get users from server %q: %v", server.Name, err)
 			continue // Try other servers
 		}
+		log.Printf("[plex] Got %d user(s) from server %q", len(users), server.Name)
 		for _, user := range users {
 			if _, exists := userMap[user.ID]; !exists {
 				userMap[user.ID] = user
@@ -530,6 +537,8 @@ func (c *Client) GetHomeUsers(authToken string) ([]PlexHomeUser, error) {
 	for _, user := range userMap {
 		users = append(users, user)
 	}
+
+	log.Printf("[plex] Home users retrieved: %d total from %d server(s)", len(users), len(servers))
 
 	return users, nil
 }
@@ -596,15 +605,22 @@ func (c *Client) GetServerUsers(server PlexResource) ([]PlexHomeUser, error) {
 	}
 
 	users := make([]PlexHomeUser, 0, len(accountsResp.MediaContainer.Account))
+	skipped := 0
 	for _, acc := range accountsResp.MediaContainer.Account {
 		// Skip system accounts (ID 0 or 1) and accounts with no name
 		if acc.ID <= 1 || acc.Name == "" {
+			skipped++
 			continue
 		}
 		users = append(users, PlexHomeUser{
 			ID:    acc.ID,
 			Title: acc.Name,
 		})
+	}
+
+	if skipped > 0 {
+		log.Printf("[plex] Server %q: %d total accounts, %d users returned, %d system accounts skipped",
+			server.Name, len(accountsResp.MediaContainer.Account), len(users), skipped)
 	}
 
 	return users, nil
