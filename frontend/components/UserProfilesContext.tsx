@@ -25,6 +25,7 @@ interface UserProfilesContextValue {
   renameUser: (id: string, name: string) => Promise<UserProfile>;
   updateColor: (id: string, color: string) => Promise<UserProfile>;
   setIconUrl: (id: string, iconUrl: string) => Promise<UserProfile>;
+  uploadIcon: (id: string, file: { uri: string; type: string; name: string }) => Promise<UserProfile>;
   clearIcon: (id: string) => Promise<UserProfile>;
   getIconUrl: (id: string) => string;
   setPin: (id: string, pin: string) => Promise<UserProfile>;
@@ -319,6 +320,12 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return updated;
   }, []);
 
+  const uploadIcon = useCallback(async (id: string, file: { uri: string; type: string; name: string }) => {
+    const updated = await apiService.uploadUserIcon(id, file);
+    setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
+    return updated;
+  }, []);
+
   const clearIcon = useCallback(async (id: string) => {
     const updated = await apiService.clearUserIcon(id);
     setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
@@ -378,6 +385,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
       renameUser,
       updateColor,
       setIconUrl,
+      uploadIcon,
       clearIcon,
       getIconUrl,
       setPin,
@@ -403,6 +411,7 @@ export const UserProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ 
     renameUser,
     updateColor,
     setIconUrl,
+    uploadIcon,
     clearIcon,
     getIconUrl,
     setPin,

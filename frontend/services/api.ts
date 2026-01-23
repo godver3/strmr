@@ -952,7 +952,9 @@ class ApiService {
     const requestInit: RequestInit = { ...options };
     const headerMap: Record<string, string> = this.mergeHeaders(options.headers);
 
-    if (!headerMap['Content-Type']) {
+    // Don't set Content-Type for FormData - let the browser set it with boundary
+    const isFormData = options.body instanceof FormData;
+    if (!headerMap['Content-Type'] && !isFormData) {
       headerMap['Content-Type'] = 'application/json';
     }
     if (!headerMap['Accept']) {
@@ -1903,6 +1905,16 @@ class ApiService {
     const safeId = this.normaliseUserId(id);
     return this.request<UserProfile>(`/users/${safeId}/icon`, {
       method: 'DELETE',
+    });
+  }
+
+  async uploadUserIcon(id: string, file: { uri: string; type: string; name: string }): Promise<UserProfile> {
+    const safeId = this.normaliseUserId(id);
+    const formData = new FormData();
+    formData.append('icon', file as unknown as Blob);
+    return this.request<UserProfile>(`/users/${safeId}/icon/upload`, {
+      method: 'POST',
+      body: formData,
     });
   }
 
