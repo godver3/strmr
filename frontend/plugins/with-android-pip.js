@@ -87,19 +87,32 @@ const withPipMainActivity = (config) => {
         }
       }
 
-      // Add onUserLeaveHint override
+      // Add onUserLeaveHint override - checks SharedPreferences directly
+      // No module dependency needed - just reads the preference that PipManagerModule writes
       const pipCode = `
+  private fun shouldEnterPip(): Boolean {
+    val prefs = getSharedPreferences("pip_manager_prefs", android.content.Context.MODE_PRIVATE)
+    val enabled = prefs.getBoolean("auto_pip_enabled", false)
+    android.util.Log.d("AndroidPiP", "shouldEnterPip: $enabled")
+    return enabled
+  }
+
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    android.util.Log.d("AndroidPiP", "onUserLeaveHint called")
+    // Only auto-enter PiP if explicitly enabled (i.e., video is playing)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && shouldEnterPip()) {
       try {
+        android.util.Log.d("AndroidPiP", "Entering PiP mode")
         val params = PictureInPictureParams.Builder()
           .setAspectRatio(Rational(16, 9))
           .build()
         enterPictureInPictureMode(params)
       } catch (e: Exception) {
-        // PiP not available or failed
+        android.util.Log.e("AndroidPiP", "Failed to enter PiP: " + e.message)
       }
+    } else {
+      android.util.Log.d("AndroidPiP", "Not entering PiP (disabled or unsupported)")
     }
   }
 `;
