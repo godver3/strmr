@@ -142,6 +142,11 @@ interface ImageWrapperProps {
   onLoad?: () => void;
 }
 
+// Debug: Track image load errors (sampled to avoid log spam)
+const DEBUG_IMAGE_ERRORS = true;
+let imageErrorCount = 0;
+const IMAGE_ERROR_LOG_INTERVAL = 10; // Log every Nth error
+
 export function Image({
   source,
   style,
@@ -177,6 +182,22 @@ export function Image({
     return finalUrl;
   }, [source, finalUrl]);
 
+  // Wrap onError to add debug logging
+  const handleError = React.useCallback(() => {
+    if (DEBUG_IMAGE_ERRORS) {
+      imageErrorCount++;
+      // Log first few errors and then sample to avoid spam
+      if (imageErrorCount <= 3 || imageErrorCount % IMAGE_ERROR_LOG_INTERVAL === 0) {
+        console.warn(`[Image:Error] Failed to load image (${imageErrorCount} total errors):`, {
+          originalUrl: sourceUrl?.substring(0, 100),
+          proxyUrl: typeof finalSource === 'string' ? finalSource.substring(0, 150) : '[local]',
+          isProxy: USE_IMAGE_PROXY && sourceUrl?.includes('image.tmdb.org'),
+        });
+      }
+    }
+    onError?.();
+  }, [sourceUrl, finalSource, onError]);
+
   if (hasExpoImage && ExpoImageModule) {
     const ExpoImage = ExpoImageModule.Image;
     return (
@@ -190,7 +211,7 @@ export function Image({
         cachePolicy={cachePolicy}
         recyclingKey={recyclingKey}
         priority={priority}
-        onError={onError}
+        onError={handleError}
         onLoad={onLoad}
       />
     );
@@ -206,7 +227,7 @@ export function Image({
       style={style}
       resizeMode={resizeMode}
       blurRadius={blurRadius}
-      onError={onError}
+      onError={handleError}
       onLoad={onLoad}
     />
   );
