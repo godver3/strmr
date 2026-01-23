@@ -5197,6 +5197,8 @@ export default function DetailsScreen() {
         isMobile={isMobile}
         maxHeight={manualResultsMaxHeight}
         demoMode={settings?.demoMode}
+        userSettings={userSettings}
+        contentPreference={contentPreference}
       />
       <SeasonSelector
         visible={seasonSelectorVisible}

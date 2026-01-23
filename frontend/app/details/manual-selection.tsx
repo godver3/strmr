@@ -4,7 +4,16 @@
 
 import FocusablePressable from '@/components/FocusablePressable';
 import { useUnplayableReleases } from '@/hooks/useUnplayableReleases';
-import { apiService, type DebridHealthCheck, type NZBHealthCheck, type NZBResult } from '@/services/api';
+import {
+  apiService,
+  type AudioTrackInfo,
+  type ContentPreference,
+  type DebridHealthCheck,
+  type NZBHealthCheck,
+  type NZBResult,
+  type SubtitleTrackInfo,
+  type UserSettings,
+} from '@/services/api';
 import {
   DefaultFocus,
   SpatialNavigationFocusableView,
@@ -12,7 +21,7 @@ import {
   SpatialNavigationRoot,
 } from '@/services/tv-navigation';
 import type { NovaTheme } from '@/theme';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -55,6 +64,8 @@ interface ManualSelectionProps {
   isMobile: boolean;
   maxHeight: number;
   demoMode?: boolean;
+  userSettings?: UserSettings;
+  contentPreference?: ContentPreference | null;
 }
 
 export const ManualSelection = ({
@@ -71,6 +82,8 @@ export const ManualSelection = ({
   isMobile,
   maxHeight,
   demoMode,
+  userSettings,
+  contentPreference,
 }: ManualSelectionProps) => {
   const styles = useMemo(() => createManualSelectionStyles(theme), [theme]);
   const safeAreaInsets = useSafeAreaInsets();
@@ -78,6 +91,46 @@ export const ManualSelection = ({
   const scrollOffsetRef = useRef(new Animated.Value(0)).current;
   const itemLayoutsRef = useRef<{ y: number; height: number }[]>([]);
   const showMobileIOSCloseButton = !Platform.isTV && isMobile && Platform.OS === 'ios';
+
+  // Track expansion state for showing audio/subtitle tracks (mobile only)
+  const [expandedTracks, setExpandedTracks] = useState<Set<string>>(new Set());
+
+  // TV: Track which result is currently focused for side panel display
+  const [tvFocusedKey, setTvFocusedKey] = useState<string | null>(null);
+
+  const toggleTracks = useCallback((key: string) => {
+    setExpandedTracks((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  // Auto-refetch tracks when tracksLoading is true
+  useEffect(() => {
+    const loadingEntries = Object.entries(healthChecks).filter(
+      ([_, state]) => state.debridDetails?.tracksLoading && state.debridDetails?.cached,
+    );
+
+    if (loadingEntries.length === 0) return;
+
+    // Set up polling for each loading entry
+    const timeoutId = setTimeout(() => {
+      loadingEntries.forEach(([key]) => {
+        // Find the result for this key and re-check health
+        const result = results.find((r) => getResultKey(r) === key);
+        if (result) {
+          onCheckHealth(result);
+        }
+      });
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearTimeout(timeoutId);
+  }, [healthChecks, results, onCheckHealth]);
 
   // Filter out releases that have been marked as unplayable
   const { isUnplayableByTitle, loading: loadingUnplayable } = useUnplayableReleases();
@@ -127,6 +180,466 @@ export const ManualSelection = ({
     [scrollOffsetRef],
   );
 
+  // Helper to format language code to display name
+  const formatLanguage = useCallback((lang: string | undefined): string => {
+    if (!lang) return 'Unknown';
+    // Common language code mappings
+    const langMap: Record<string, string> = {
+      eng: 'English',
+      en: 'English',
+      jpn: 'Japanese',
+      ja: 'Japanese',
+      spa: 'Spanish',
+      es: 'Spanish',
+      fre: 'French',
+      fra: 'French',
+      fr: 'French',
+      ger: 'German',
+      deu: 'German',
+      de: 'German',
+      ita: 'Italian',
+      it: 'Italian',
+      por: 'Portuguese',
+      pt: 'Portuguese',
+      rus: 'Russian',
+      ru: 'Russian',
+      chi: 'Chinese',
+      zho: 'Chinese',
+      zh: 'Chinese',
+      kor: 'Korean',
+      ko: 'Korean',
+      ara: 'Arabic',
+      ar: 'Arabic',
+      hin: 'Hindi',
+      hi: 'Hindi',
+      und: 'Unknown',
+    };
+    return langMap[lang.toLowerCase()] || lang.toUpperCase();
+  }, []);
+
+  // Get track preferences: content override > user preference > empty (no preference)
+  // Content override takes priority over user settings
+  const audioLangPref = (
+    contentPreference?.audioLanguage ||
+    userSettings?.playback?.preferredAudioLanguage ||
+    ''
+  ).toLowerCase();
+  const subLangPref = (
+    contentPreference?.subtitleLanguage ||
+    userSettings?.playback?.preferredSubtitleLanguage ||
+    ''
+  ).toLowerCase();
+  const subModePref =
+    contentPreference?.subtitleMode ||
+    userSettings?.playback?.preferredSubtitleMode ||
+    'off';
+
+  // Helper to check if a language matches the preference
+  const matchesLanguage = useCallback((language: string | undefined, title: string | undefined, pref: string): boolean => {
+    if (!pref) return false; // No preference set
+    const lang = (language || '').toLowerCase();
+    const t = (title || '').toLowerCase();
+    const normalizedPref = pref.toLowerCase();
+
+    // Exact match
+    if (lang === normalizedPref || t === normalizedPref) return true;
+    // Partial match (skip empty strings)
+    if (lang && (lang.includes(normalizedPref) || normalizedPref.includes(lang))) return true;
+    if (t && (t.includes(normalizedPref) || normalizedPref.includes(t))) return true;
+    return false;
+  }, []);
+
+  // Compatible audio codecs that don't need transcoding
+  const compatibleAudioCodecs = useMemo(() => new Set(['aac', 'ac3', 'eac3', 'mp3']), []);
+  const trueHdCodecs = useMemo(() => new Set(['truehd', 'mlp']), []);
+
+  // Check if a track is a commentary track
+  const isCommentary = useCallback((title: string) => {
+    const lower = (title || '').toLowerCase();
+    return lower.includes('commentary') || lower.includes('isolated score') || lower.includes('music only');
+  }, []);
+
+  // Find first compatible audio track (when no language preference or no match)
+  const findFirstCompatibleAudioTrack = useCallback((tracks: AudioTrackInfo[]): number | null => {
+    // First try: compatible codec, skip commentary
+    for (const track of tracks) {
+      if (compatibleAudioCodecs.has(track.codec?.toLowerCase() || '') && !isCommentary(track.title || '')) {
+        return track.index;
+      }
+    }
+    // Second try: non-TrueHD, skip commentary
+    for (const track of tracks) {
+      if (!trueHdCodecs.has(track.codec?.toLowerCase() || '') && !isCommentary(track.title || '')) {
+        return track.index;
+      }
+    }
+    // Last resort: first track
+    return tracks[0]?.index ?? null;
+  }, [compatibleAudioCodecs, trueHdCodecs, isCommentary]);
+
+  // Find selected audio track (matches backend logic in track_helper.go)
+  // Returns: { index: number | null, reason: 'preference' | 'first' | 'none' }
+  const findSelectedAudioTrack = useCallback((tracks: AudioTrackInfo[] | undefined): { index: number | null; reason: 'preference' | 'first' | 'none' } => {
+    if (!tracks?.length) return { index: null, reason: 'none' };
+
+    // If no language preference set, default to first compatible track
+    if (!audioLangPref) {
+      const firstIdx = findFirstCompatibleAudioTrack(tracks);
+      return { index: firstIdx, reason: 'first' };
+    }
+
+    // Try to find track matching language preference
+    // Pass 1: Compatible codec, matching language, skip commentary
+    for (const track of tracks) {
+      if (matchesLanguage(track.language, track.title, audioLangPref) &&
+          compatibleAudioCodecs.has(track.codec?.toLowerCase() || '') &&
+          !isCommentary(track.title || '')) {
+        return { index: track.index, reason: 'preference' };
+      }
+    }
+    // Pass 2: Non-TrueHD, matching language, skip commentary
+    for (const track of tracks) {
+      if (matchesLanguage(track.language, track.title, audioLangPref) &&
+          !trueHdCodecs.has(track.codec?.toLowerCase() || '') &&
+          !isCommentary(track.title || '')) {
+        return { index: track.index, reason: 'preference' };
+      }
+    }
+    // Pass 3: TrueHD, matching language, skip commentary
+    for (const track of tracks) {
+      if (matchesLanguage(track.language, track.title, audioLangPref) &&
+          !isCommentary(track.title || '')) {
+        return { index: track.index, reason: 'preference' };
+      }
+    }
+    // Pass 4-6: Include commentary tracks
+    for (const track of tracks) {
+      if (matchesLanguage(track.language, track.title, audioLangPref) &&
+          compatibleAudioCodecs.has(track.codec?.toLowerCase() || '')) {
+        return { index: track.index, reason: 'preference' };
+      }
+    }
+    for (const track of tracks) {
+      if (matchesLanguage(track.language, track.title, audioLangPref) &&
+          !trueHdCodecs.has(track.codec?.toLowerCase() || '')) {
+        return { index: track.index, reason: 'preference' };
+      }
+    }
+    for (const track of tracks) {
+      if (matchesLanguage(track.language, track.title, audioLangPref)) {
+        return { index: track.index, reason: 'preference' };
+      }
+    }
+
+    // No match found - fall back to first compatible track
+    const firstIdx = findFirstCompatibleAudioTrack(tracks);
+    return { index: firstIdx, reason: 'first' };
+  }, [audioLangPref, matchesLanguage, compatibleAudioCodecs, trueHdCodecs, isCommentary, findFirstCompatibleAudioTrack]);
+
+  // Find selected subtitle track (matches backend logic)
+  // Returns: { index: number | null, willSearchExternal: boolean }
+  const findSelectedSubtitleTrack = useCallback((tracks: SubtitleTrackInfo[] | undefined): { index: number | null; willSearchExternal: boolean } => {
+    // Default mode is "off" - no subtitles
+    if (subModePref === 'off' || subModePref === '') {
+      return { index: null, willSearchExternal: false };
+    }
+
+    if (!tracks?.length) {
+      // No tracks available - will search externally if mode is "on" and language is set
+      return { index: null, willSearchExternal: subModePref === 'on' && !!subLangPref };
+    }
+
+    // Filter out bitmap subtitles (PGS, VOBSUB) - they can't be used
+    const usableTracks = tracks.filter(t => !t.isBitmap);
+
+    // If no language preference, can't select a track
+    if (!subLangPref) {
+      return { index: null, willSearchExternal: false };
+    }
+
+    // Helper to check if track is SDH (Subtitles for Deaf/Hard of Hearing)
+    const isSDH = (track: SubtitleTrackInfo) => {
+      const title = (track.title || '').toLowerCase();
+      return title.includes('sdh') || title.includes('deaf') || title.includes('hard of hearing');
+    };
+
+    if (subModePref === 'forced-only') {
+      // Only consider forced tracks
+      const forcedTracks = usableTracks.filter(t => t.forced);
+      for (const track of forcedTracks) {
+        if (matchesLanguage(track.language, track.title, subLangPref)) {
+          return { index: track.index, willSearchExternal: false };
+        }
+      }
+      return { index: null, willSearchExternal: false };
+    }
+
+    // Mode is "on" - prefer SDH > regular > forced
+    // Pass 1: SDH tracks matching language (preferred for "on" mode)
+    for (const track of usableTracks) {
+      if (!track.forced && isSDH(track) && matchesLanguage(track.language, track.title, subLangPref)) {
+        return { index: track.index, willSearchExternal: false };
+      }
+    }
+
+    // Pass 2: Regular non-forced, non-SDH tracks matching language
+    for (const track of usableTracks) {
+      if (!track.forced && !isSDH(track) && matchesLanguage(track.language, track.title, subLangPref)) {
+        return { index: track.index, willSearchExternal: false };
+      }
+    }
+
+    // Pass 3: Forced tracks matching language (last resort)
+    for (const track of usableTracks) {
+      if (track.forced && matchesLanguage(track.language, track.title, subLangPref)) {
+        return { index: track.index, willSearchExternal: false };
+      }
+    }
+
+    // No match found - will search externally if mode is "on"
+    return { index: null, willSearchExternal: true };
+  }, [subModePref, subLangPref, matchesLanguage]);
+
+  // Helper to render track panel
+  const renderTrackPanel = useCallback(
+    (audioTracks: AudioTrackInfo[] | undefined, subtitleTracks: SubtitleTrackInfo[] | undefined, isFocused: boolean) => {
+      if (!audioTracks?.length && !subtitleTracks?.length) {
+        return null;
+      }
+
+      const { index: selectedAudioIdx, reason: audioReason } = findSelectedAudioTrack(audioTracks);
+      const { index: selectedSubIdx, willSearchExternal } = findSelectedSubtitleTrack(subtitleTracks);
+
+      return (
+        <View style={[styles.trackPanel, isFocused && styles.trackPanelFocused]}>
+          {audioTracks && audioTracks.length > 0 && (
+            <View style={styles.trackSection}>
+              <Text style={[styles.trackSectionTitle, isFocused && styles.trackSectionTitleFocused]}>Audio</Text>
+              {audioTracks.map((track) => {
+                const isSelected = track.index === selectedAudioIdx;
+                return (
+                  <View key={track.index} style={styles.trackItemRow}>
+                    {isSelected && <Text style={styles.selectedIndicator}>▶</Text>}
+                    <Text style={[
+                      styles.trackItem,
+                      isFocused && styles.trackItemFocused,
+                      isSelected && styles.trackItemSelected,
+                      !isSelected && styles.trackItemDimmed,
+                    ]}>
+                      {formatLanguage(track.language)}
+                      {track.title ? ` - ${track.title}` : ''}
+                      {track.codec ? ` (${track.codec.toUpperCase()})` : ''}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+          {(subtitleTracks && subtitleTracks.length > 0) || subModePref !== 'off' ? (
+            <View style={styles.trackSection}>
+              <Text style={[styles.trackSectionTitle, isFocused && styles.trackSectionTitleFocused]}>Subtitles</Text>
+              {/* Show "Off" option when subtitle mode is off */}
+              {subModePref === 'off' && (
+                <View style={styles.trackItemRow}>
+                  <Text style={styles.selectedIndicator}>▶</Text>
+                  <Text style={[styles.trackItem, isFocused && styles.trackItemFocused, styles.trackItemSelected]}>
+                    Off
+                  </Text>
+                </View>
+              )}
+              {/* Show subtitle tracks */}
+              {subtitleTracks?.map((track) => {
+                const isSelected = track.index === selectedSubIdx;
+                const isUnusable = track.isBitmap;
+                return (
+                  <View key={track.index} style={styles.trackItemRow}>
+                    {isSelected && <Text style={styles.selectedIndicator}>▶</Text>}
+                    <Text style={[
+                      styles.trackItem,
+                      isFocused && styles.trackItemFocused,
+                      isSelected && styles.trackItemSelected,
+                      !isSelected && !isUnusable && styles.trackItemDimmed,
+                      isUnusable && styles.trackItemUnusable,
+                    ]}>
+                      {formatLanguage(track.language)}
+                      {track.title ? ` - ${track.title}` : ''}
+                      {track.forced && ' (Forced)'}
+                    </Text>
+                    {track.isBitmap && (
+                      <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>
+                    )}
+                  </View>
+                );
+              })}
+              {/* Show external search indicator */}
+              {willSearchExternal && (
+                <View style={styles.trackItemRow}>
+                  <Text style={styles.selectedIndicator}>▶</Text>
+                  <Text style={[styles.trackItem, isFocused && styles.trackItemFocused, styles.trackItemSelected]}>
+                    External search ({formatLanguage(subLangPref)})
+                  </Text>
+                  <Text style={styles.externalSearchBadge}>SEARCH</Text>
+                </View>
+              )}
+              {/* Show "Off" when no tracks and mode is off */}
+              {!subtitleTracks?.length && subModePref === 'off' && null}
+            </View>
+          ) : null}
+        </View>
+      );
+    },
+    [formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref],
+  );
+
+  // TV: Render the tracks side panel for the focused item
+  const renderTvTracksSidePanel = useCallback(() => {
+    if (!tvFocusedKey) {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>Select an item to see track details</Text>
+        </View>
+      );
+    }
+
+    const healthState = healthChecks[tvFocusedKey];
+    const serviceType = filteredResults.find((r) => getResultKey(r) === tvFocusedKey)?.serviceType?.toLowerCase();
+    const isDebrid = serviceType === 'debrid';
+    const isCached = healthState?.state === 'healthy' && healthState?.debridDetails?.cached;
+    const tracksLoading = healthState?.debridDetails?.tracksLoading;
+    const hasTracks =
+      healthState?.debridDetails?.audioTracks?.length || healthState?.debridDetails?.subtitleTracks?.length;
+
+    if (!isDebrid) {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>Track info only available for debrid sources</Text>
+        </View>
+      );
+    }
+
+    if (!healthState || healthState.state === 'not_applicable') {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>Check cache status to see tracks</Text>
+        </View>
+      );
+    }
+
+    if (healthState.state === 'checking') {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>Checking cache status…</Text>
+        </View>
+      );
+    }
+
+    if (!isCached) {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>Not cached - tracks unavailable</Text>
+        </View>
+      );
+    }
+
+    if (tracksLoading) {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>Loading tracks…</Text>
+        </View>
+      );
+    }
+
+    if (!hasTracks) {
+      return (
+        <View style={styles.tvTracksSidePanel}>
+          <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+          <Text style={styles.tvTracksSidePanelPlaceholder}>No track info available</Text>
+        </View>
+      );
+    }
+
+    const audioTracks = healthState.debridDetails?.audioTracks || [];
+    const subtitleTracks = healthState.debridDetails?.subtitleTracks || [];
+    const { index: selectedAudioIdx, reason: audioReason } = findSelectedAudioTrack(audioTracks);
+    const { index: selectedSubIdx, willSearchExternal } = findSelectedSubtitleTrack(subtitleTracks);
+
+    return (
+      <View style={styles.tvTracksSidePanel}>
+        <Text style={styles.tvTracksSidePanelTitle}>Track Info</Text>
+        <ScrollView style={styles.tvTracksSidePanelScroll} showsVerticalScrollIndicator={false}>
+          {audioTracks.length > 0 && (
+            <View style={styles.tvTrackSection}>
+              <Text style={styles.tvTrackSectionTitle}>Audio ({audioTracks.length})</Text>
+              {audioTracks.map((track) => {
+                const isSelected = track.index === selectedAudioIdx;
+                return (
+                  <View key={track.index} style={styles.tvTrackItemRow}>
+                    {isSelected && <Text style={styles.tvSelectedIndicator}>▶</Text>}
+                    <Text style={[
+                      styles.tvTrackItem,
+                      isSelected && styles.tvTrackItemSelected,
+                      !isSelected && styles.tvTrackItemDimmed,
+                    ]}>
+                      {formatLanguage(track.language)}
+                      {track.title ? ` - ${track.title}` : ''}
+                      {track.codec ? ` (${track.codec.toUpperCase()})` : ''}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+          <View style={styles.tvTrackSection}>
+            <Text style={styles.tvTrackSectionTitle}>Subtitles ({subtitleTracks.length})</Text>
+            {/* Show "Off" option when subtitle mode is off */}
+            {subModePref === 'off' && (
+              <View style={styles.tvTrackItemRow}>
+                <Text style={styles.tvSelectedIndicator}>▶</Text>
+                <Text style={[styles.tvTrackItem, styles.tvTrackItemSelected]}>Off</Text>
+              </View>
+            )}
+            {subtitleTracks.map((track) => {
+              const isSelected = track.index === selectedSubIdx;
+              const isUnusable = track.isBitmap;
+              return (
+                <View key={track.index} style={styles.tvTrackItemRow}>
+                  {isSelected && <Text style={styles.tvSelectedIndicator}>▶</Text>}
+                  <Text style={[
+                    styles.tvTrackItem,
+                    isSelected && styles.tvTrackItemSelected,
+                    !isSelected && !isUnusable && styles.tvTrackItemDimmed,
+                    isUnusable && styles.tvTrackItemUnusable,
+                  ]}>
+                    {formatLanguage(track.language)}
+                    {track.title ? ` - ${track.title}` : ''}
+                    {track.forced && ' (Forced)'}
+                  </Text>
+                  {track.isBitmap && <Text style={styles.bitmapBadge}>{track.bitmapType || 'BITMAP'}</Text>}
+                </View>
+              );
+            })}
+            {/* Show external search indicator */}
+            {willSearchExternal && (
+              <View style={styles.tvTrackItemRow}>
+                <Text style={styles.tvSelectedIndicator}>▶</Text>
+                <Text style={[styles.tvTrackItem, styles.tvTrackItemSelected]}>
+                  External search ({formatLanguage(subLangPref)})
+                </Text>
+                <Text style={styles.externalSearchBadge}>SEARCH</Text>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }, [tvFocusedKey, healthChecks, filteredResults, formatLanguage, styles, findSelectedAudioTrack, findSelectedSubtitleTrack, subModePref, subLangPref]);
+
   const renderManualResultContent = useCallback(
     (result: NZBResult, isFocused: boolean) => {
       const key = getResultKey(result);
@@ -134,6 +647,20 @@ export const ManualSelection = ({
       const isUnplayable = isResultUnplayable(healthState);
       const serviceType = (result.serviceType ?? 'usenet').toLowerCase() as 'usenet' | 'debrid';
       const serviceLabel = serviceType === 'debrid' ? 'D' : 'U';
+
+      // Check if tracks are available or loading (debrid only, when cached)
+      const tracksLoading =
+        serviceType === 'debrid' &&
+        healthState?.state === 'healthy' &&
+        healthState?.debridDetails?.cached &&
+        healthState?.debridDetails?.tracksLoading;
+      const hasTracks =
+        serviceType === 'debrid' &&
+        healthState?.state === 'healthy' &&
+        healthState?.debridDetails?.cached &&
+        !tracksLoading &&
+        (healthState?.debridDetails?.audioTracks?.length || healthState?.debridDetails?.subtitleTracks?.length);
+      const isExpanded = expandedTracks.has(key);
 
       let statusLabel: string | null = null;
       if (healthState) {
@@ -210,7 +737,34 @@ export const ManualSelection = ({
           <View style={containerStyles}>
             <Text style={titleStyles}>{result.attributes!.raw_name}</Text>
             <Text style={[metaStyles, styles.manualResultDescription]}>{result.attributes!.raw_description}</Text>
-            {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
+            <View style={styles.statusRow}>
+              {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
+              {tracksLoading && !Platform.isTV && (
+                <Text style={[styles.tracksLoadingText, isFocused && styles.tracksButtonTextFocused]}>
+                  Loading tracks…
+                </Text>
+              )}
+              {hasTracks && !Platform.isTV && (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    toggleTracks(key);
+                  }}
+                  hitSlop={8}
+                  style={styles.tracksButton}>
+                  <Text style={[styles.tracksButtonText, isFocused && styles.tracksButtonTextFocused]}>
+                    Tracks {isExpanded ? '▲' : '▼'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+            {isExpanded &&
+              hasTracks &&
+              renderTrackPanel(
+                healthState?.debridDetails?.audioTracks,
+                healthState?.debridDetails?.subtitleTracks,
+                isFocused,
+              )}
           </View>
         );
       }
@@ -228,11 +782,38 @@ export const ManualSelection = ({
               {serviceType === 'usenet' && result.publishDate ? ` • ${formatPublishDate(result.publishDate)}` : ''}
             </Text>
           </View>
-          {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
+          <View style={styles.statusRow}>
+            {statusLabel && <Text style={statusStyles}>{statusLabel}</Text>}
+            {tracksLoading && !Platform.isTV && (
+              <Text style={[styles.tracksLoadingText, isFocused && styles.tracksButtonTextFocused]}>
+                Loading tracks…
+              </Text>
+            )}
+            {hasTracks && !Platform.isTV && (
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation();
+                  toggleTracks(key);
+                }}
+                hitSlop={8}
+                style={styles.tracksButton}>
+                <Text style={[styles.tracksButtonText, isFocused && styles.tracksButtonTextFocused]}>
+                  Tracks {isExpanded ? '▲' : '▼'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+          {isExpanded &&
+            hasTracks &&
+            renderTrackPanel(
+              healthState?.debridDetails?.audioTracks,
+              healthState?.debridDetails?.subtitleTracks,
+              isFocused,
+            )}
         </View>
       );
     },
-    [healthChecks, styles, demoMode],
+    [healthChecks, styles, demoMode, expandedTracks, toggleTracks, renderTrackPanel],
   );
 
   if (!visible) {
@@ -290,11 +871,12 @@ export const ManualSelection = ({
                 !error &&
                 filteredResults.length > 0 &&
                 (Platform.isTV ? (
-                  // TV: Use View + Animated.View to bypass native scroll gestures
-                  <SpatialNavigationNode orientation="vertical">
-                    <View style={[styles.manualResultsContainer, { maxHeight, overflow: 'hidden' }]}>
-                      <Animated.View
-                        style={[styles.manualResultsContent, { transform: [{ translateY: scrollOffsetRef }] }]}>
+                  // TV: Two-column layout with results on left, tracks on right
+                  <View style={[styles.tvLayoutRow, { maxHeight }]}>
+                    <SpatialNavigationNode orientation="vertical">
+                      <View style={[styles.tvResultsColumn, { overflow: 'hidden' }]}>
+                        <Animated.View
+                          style={[styles.manualResultsContent, { transform: [{ translateY: scrollOffsetRef }] }]}>
                         {filteredResults.map((result, index) => {
                           const key = getResultKey(result) || `${result.indexer}-${index}`;
                           const healthState = healthChecks[key];
@@ -351,6 +933,7 @@ export const ManualSelection = ({
                                   index,
                                 );
                                 handleItemFocus(index);
+                                setTvFocusedKey(key);
                               }}>
                               {({ isFocused }: { isFocused: boolean }) => (
                                 <Pressable tvParallaxProperties={{ enabled: false }}>
@@ -369,9 +952,11 @@ export const ManualSelection = ({
                           // Auto-focus first item
                           return index === 0 ? <DefaultFocus key={key}>{focusableItem}</DefaultFocus> : focusableItem;
                         })}
-                      </Animated.View>
-                    </View>
-                  </SpatialNavigationNode>
+                        </Animated.View>
+                      </View>
+                    </SpatialNavigationNode>
+                    {renderTvTracksSidePanel()}
+                  </View>
                 ) : isMobile || isWebTouch ? (
                   <ScrollView
                     style={[styles.manualResultsContainer, { maxHeight }]}
@@ -431,11 +1016,21 @@ export const useManualHealthChecks = (_results: NZBResult[]) => {
     const key = getResultKey(result);
     const serviceType = (result.serviceType ?? 'usenet').toLowerCase();
 
-    // Set to checking state
-    setHealthChecks((prev) => ({
-      ...prev,
-      [key]: { state: 'checking' },
-    }));
+    // Check if we already have a cached/healthy result - if so, we're just polling for tracks
+    // Don't reset to 'checking' state in that case
+    const existingState = healthChecks[key];
+    const isTrackPolling =
+      existingState?.state === 'healthy' &&
+      existingState?.debridDetails?.cached &&
+      existingState?.debridDetails?.tracksLoading;
+
+    if (!isTrackPolling) {
+      // Set to checking state only for initial health checks
+      setHealthChecks((prev) => ({
+        ...prev,
+        [key]: { state: 'checking' },
+      }));
+    }
 
     try {
       if (serviceType === 'debrid') {
@@ -458,13 +1053,26 @@ export const useManualHealthChecks = (_results: NZBResult[]) => {
         }));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Health check failed.';
-      setHealthChecks((prev) => ({
-        ...prev,
-        [key]: { state: 'error', error: message },
-      }));
+      // On error during track polling, preserve the cached state but clear tracksLoading
+      if (isTrackPolling) {
+        setHealthChecks((prev) => ({
+          ...prev,
+          [key]: {
+            ...prev[key],
+            debridDetails: prev[key].debridDetails
+              ? { ...prev[key].debridDetails, tracksLoading: false }
+              : undefined,
+          },
+        }));
+      } else {
+        const message = err instanceof Error ? err.message : 'Health check failed.';
+        setHealthChecks((prev) => ({
+          ...prev,
+          [key]: { state: 'error', error: message },
+        }));
+      }
     }
-  }, []);
+  }, [healthChecks]);
 
   return { healthChecks, checkHealth };
 };
@@ -690,6 +1298,184 @@ const createManualSelectionStyles = (theme: NovaTheme) => {
     },
     manualResultDisabled: {
       opacity: 0.5,
+    },
+    // Track display styles
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: theme.spacing.xs,
+    },
+    tracksButton: {
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.xs,
+      borderRadius: theme.radius.sm,
+      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    },
+    tracksButtonText: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '600',
+    },
+    tracksButtonTextFocused: {
+      color: theme.colors.background.base,
+    },
+    trackPanel: {
+      marginTop: theme.spacing.md,
+      paddingTop: theme.spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: 'rgba(255, 255, 255, 0.2)',
+    },
+    trackPanelFocused: {
+      borderTopColor: 'rgba(0, 0, 0, 0.2)',
+    },
+    trackSection: {
+      marginBottom: theme.spacing.sm,
+    },
+    trackSectionTitle: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      marginBottom: theme.spacing.xs,
+    },
+    trackSectionTitleFocused: {
+      color: theme.colors.background.base,
+    },
+    trackItem: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.primary,
+      marginBottom: 2,
+    },
+    trackItemFocused: {
+      color: theme.colors.background.base,
+    },
+    trackItemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginBottom: 2,
+    },
+    bitmapBadge: {
+      ...theme.typography.caption.sm,
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#fff',
+      backgroundColor: '#e67e22',
+      paddingHorizontal: theme.spacing.xs,
+      paddingVertical: 1,
+      borderRadius: theme.radius.sm,
+      overflow: 'hidden',
+    },
+    tracksLoadingText: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      fontStyle: 'italic',
+    },
+    selectedIndicator: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.accent.primary,
+      marginRight: theme.spacing.xs,
+      width: 12,
+    },
+    trackItemSelected: {
+      color: theme.colors.accent.primary,
+      fontWeight: '600',
+    },
+    trackItemDimmed: {
+      opacity: 0.5,
+    },
+    trackItemUnusable: {
+      opacity: 0.4,
+      textDecorationLine: 'line-through',
+    },
+    externalSearchBadge: {
+      ...theme.typography.caption.sm,
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#fff',
+      backgroundColor: theme.colors.accent.secondary,
+      paddingHorizontal: theme.spacing.xs,
+      paddingVertical: 1,
+      borderRadius: theme.radius.sm,
+      overflow: 'hidden',
+      marginLeft: theme.spacing.xs,
+    },
+    // TV side panel styles
+    tvLayoutRow: {
+      flexDirection: 'row',
+      gap: theme.spacing.xl,
+      flexGrow: 1,
+      flexShrink: 1,
+      width: '100%',
+      marginBottom: theme.spacing.lg,
+    },
+    tvResultsColumn: {
+      flex: 1,
+      flexShrink: 1,
+      paddingRight: theme.spacing.sm,
+    },
+    tvTracksSidePanel: {
+      width: 280,
+      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.lg,
+      alignSelf: 'flex-start',
+    },
+    tvTracksSidePanelTitle: {
+      ...theme.typography.title.md,
+      color: theme.colors.text.primary,
+      marginBottom: theme.spacing.md,
+      fontSize: theme.typography.title.md.fontSize * 1.1,
+    },
+    tvTracksSidePanelPlaceholder: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.secondary,
+      fontSize: theme.typography.body.md.fontSize * 1.1,
+    },
+    tvTracksSidePanelScroll: {
+      flex: 1,
+    },
+    tvTrackSection: {
+      marginBottom: theme.spacing.lg,
+    },
+    tvTrackSectionTitle: {
+      ...theme.typography.label.md,
+      color: theme.colors.text.secondary,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      marginBottom: theme.spacing.sm,
+      fontSize: theme.typography.label.md.fontSize * 1.1,
+    },
+    tvTrackItem: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      marginBottom: theme.spacing.xs,
+      fontSize: theme.typography.body.md.fontSize * 1.1,
+    },
+    tvTrackItemRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.xs,
+    },
+    tvSelectedIndicator: {
+      ...theme.typography.body.md,
+      color: theme.colors.accent.primary,
+      marginRight: theme.spacing.xs,
+      width: 16,
+      fontSize: theme.typography.body.md.fontSize * 1.1,
+    },
+    tvTrackItemSelected: {
+      color: theme.colors.accent.primary,
+      fontWeight: '600',
+    },
+    tvTrackItemDimmed: {
+      opacity: 0.5,
+    },
+    tvTrackItemUnusable: {
+      opacity: 0.4,
+      textDecorationLine: 'line-through',
     },
   });
 };

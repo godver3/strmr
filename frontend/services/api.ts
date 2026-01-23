@@ -297,6 +297,23 @@ export interface NZBHealthCheck {
   sampled?: boolean;
 }
 
+export interface AudioTrackInfo {
+  index: number;
+  language: string;
+  codec: string;
+  title?: string;
+}
+
+export interface SubtitleTrackInfo {
+  index: number;
+  language: string;
+  codec: string;
+  title?: string;
+  forced: boolean;
+  isBitmap: boolean;
+  bitmapType?: string;
+}
+
 export interface DebridHealthCheck {
   healthy: boolean;
   status: string;
@@ -304,6 +321,11 @@ export interface DebridHealthCheck {
   provider: string;
   infoHash?: string;
   errorMessage?: string;
+  // Track info (populated when cached)
+  audioTracks?: AudioTrackInfo[];
+  subtitleTracks?: SubtitleTrackInfo[];
+  trackProbeError?: string;
+  tracksLoading?: boolean;
 }
 
 // SubtitleSessionInfo represents a pre-extracted subtitle track session
