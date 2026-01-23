@@ -959,14 +959,18 @@ function IndexScreen() {
     // Enrich with watch status before mapping to CardData (for TV shelf badges)
     const trendingItems = mapWatchlistToTrendingItems(watchlistItems, watchlistYears);
     const enrichedItems = enrichTrendingItemsWithWatchStatus(trendingItems, isWatched, watchStatusItems, continueWatchingItems);
-    const allCards = mapTrendingToCards(enrichedItems, movieReleases);
+    // Filter out watched items if hideWatched is enabled
+    const filteredItems = hideWatched
+      ? enrichedItems.filter((item) => !isWatched(item.title.mediaType, item.title.id))
+      : enrichedItems;
+    const allCards = mapTrendingToCards(filteredItems, movieReleases);
     if (allCards.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allCards;
     }
     const exploreCard = createExploreCard('watchlist', allCards);
     const limitedCards = allCards.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedCards, exploreCard] : [exploreCard, ...limitedCards];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, isWatched, watchStatusItems, continueWatchingItems, hideWatched]);
   const continueWatchingCards = useMemo(() => {
     if (DEBUG_INDEX_RENDERS) {
       console.log(
@@ -1404,9 +1408,13 @@ function IndexScreen() {
       return title;
     });
     // Enrich with watch status if badge is enabled
-    const allTitles = shouldEnrichWatchStatus
+    const enrichedTitles = shouldEnrichWatchStatus
       ? enrichWithWatchStatus(titlesWithReleases, isWatched, watchStatusItems, continueWatchingItems)
       : titlesWithReleases;
+    // Filter out watched items if hideWatched is enabled
+    const allTitles = hideWatched
+      ? enrichedTitles.filter((title) => !isWatched(title.mediaType, title.id))
+      : enrichedTitles;
     if (allTitles.length <= MAX_SHELF_ITEMS_ON_HOME) {
       return allTitles;
     }
@@ -1431,7 +1439,7 @@ function IndexScreen() {
     };
     const limitedTitles = allTitles.slice(0, MAX_SHELF_ITEMS_ON_HOME);
     return exploreCardPosition === 'end' ? [...limitedTitles, exploreTitle] : [exploreTitle, ...limitedTitles];
-  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems]);
+  }, [watchlistItems, watchlistYears, movieReleases, exploreCardPosition, shouldEnrichWatchStatus, isWatched, watchStatusItems, continueWatchingItems, hideWatched]);
   const continueWatchingTitles = useMemo(() => {
     const baseTitles = mapContinueWatchingToTitles(continueWatchingItems, seriesOverviews, watchlistItems);
     // Merge cached release data for movies

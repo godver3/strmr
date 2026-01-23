@@ -794,13 +794,19 @@ export default function WatchlistScreen() {
 
   // Select the appropriate titles based on mode
   const allTitles = useMemo((): WatchlistTitle[] => {
-    if (!isExploreMode) return watchlistTitles;
-    if (isPersonMode) return personTitles;
+    if (!isExploreMode) {
+      // Personal watchlist - apply hideWatched filter
+      if (hideWatched) {
+        return watchlistTitles.filter((title) => !isWatched(title.mediaType, title.id));
+      }
+      return watchlistTitles;
+    }
+    if (isPersonMode) return personTitles; // Don't filter bio mode
     if (isCollectionMode) return collectionTitles;
     if (shelfId === 'continue-watching') return continueWatchingTitles;
     if (needsProgressiveLoading) return exploreTitles;
     return [];
-  }, [isExploreMode, isPersonMode, isCollectionMode, shelfId, watchlistTitles, personTitles, collectionTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles]);
+  }, [isExploreMode, isPersonMode, isCollectionMode, shelfId, watchlistTitles, personTitles, collectionTitles, continueWatchingTitles, needsProgressiveLoading, exploreTitles, hideWatched, isWatched]);
 
   // Page title based on mode
   const pageTitle = useMemo(() => {
