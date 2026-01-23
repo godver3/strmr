@@ -20,11 +20,11 @@ func TestServiceInitialisesDefaultUser(t *testing.T) {
 		t.Fatalf("expected exactly one user, got %d", len(list))
 	}
 
-	if list[0].ID != models.DefaultUserID {
-		t.Fatalf("expected default user id %q, got %q", models.DefaultUserID, list[0].ID)
+	if list[0].ID == "" {
+		t.Fatal("expected default user to have an ID")
 	}
-	if list[0].Name == "" {
-		t.Fatalf("expected default user to have a name")
+	if list[0].Name != models.DefaultUserName {
+		t.Fatalf("expected default user name %q, got %q", models.DefaultUserName, list[0].Name)
 	}
 }
 
@@ -61,14 +61,19 @@ func TestServiceCreateRenameAndDelete(t *testing.T) {
 	}
 }
 
-func TestDeleteDefaultUserFails(t *testing.T) {
+func TestDeleteLastUserFails(t *testing.T) {
 	svc, err := users.NewService(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	if err := svc.Delete(models.DefaultUserID); err == nil {
-		t.Fatalf("expected delete to fail for default user")
+	list := svc.List()
+	if len(list) != 1 {
+		t.Fatalf("expected exactly one user, got %d", len(list))
+	}
+
+	if err := svc.Delete(list[0].ID); err == nil {
+		t.Fatal("expected delete to fail for last remaining user")
 	}
 }
 
@@ -98,7 +103,10 @@ func TestSetIconURLSendsUserAgent(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	_, err = svc.SetIconURL(models.DefaultUserID, server.URL+"/test.png")
+	list := svc.List()
+	userID := list[0].ID
+
+	_, err = svc.SetIconURL(userID, server.URL+"/test.png")
 	if err != nil {
 		t.Fatalf("SetIconURL failed: %v", err)
 	}
@@ -117,12 +125,15 @@ func TestSetIconURLInvalidURL(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	_, err = svc.SetIconURL(models.DefaultUserID, "not-a-url")
+	list := svc.List()
+	userID := list[0].ID
+
+	_, err = svc.SetIconURL(userID, "not-a-url")
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
 
-	_, err = svc.SetIconURL(models.DefaultUserID, "")
+	_, err = svc.SetIconURL(userID, "")
 	if err == nil {
 		t.Fatal("expected error for empty URL")
 	}
@@ -151,7 +162,10 @@ func TestSetIconURLServerError(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	_, err = svc.SetIconURL(models.DefaultUserID, server.URL+"/test.png")
+	list := svc.List()
+	userID := list[0].ID
+
+	_, err = svc.SetIconURL(userID, server.URL+"/test.png")
 	if err == nil {
 		t.Fatal("expected error for server 403 response")
 	}

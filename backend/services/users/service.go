@@ -704,9 +704,7 @@ func (s *Service) ensureDefaultUser() error {
 func (s *Service) createLocked(accountID, name string) (models.User, error) {
 	id := uuid.NewString()
 
-	if len(s.users) == 0 {
-		id = models.DefaultUserID
-	} else if _, exists := s.users[id]; exists {
+	if _, exists := s.users[id]; exists {
 		return models.User{}, fmt.Errorf("generated duplicate user id")
 	}
 
