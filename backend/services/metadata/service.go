@@ -1882,25 +1882,17 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			target.TVDBID = season.ID
 		}
 
-		// Use translated season name/overview if available, fallback to extended data
-		seasonName := strings.TrimSpace(season.Name)
-		seasonOverview := strings.TrimSpace(season.Overview)
-
+		// Use translated season name/overview if available
+		// If no translation exists for the requested language, keep the default "Season N"
+		// to avoid showing non-English names when English is configured
 		if trans, ok := seasonTranslations[season.ID]; ok {
 			if trans.name != "" {
-				seasonName = trans.name
+				target.Name = trans.name
 				log.Printf("[metadata] using translated season name tvdbId=%d season=%d lang=%s name=%q", tvdbID, season.Number, s.client.language, trans.name)
 			}
 			if trans.overview != "" {
-				seasonOverview = trans.overview
+				target.Overview = trans.overview
 			}
-		}
-
-		if seasonName != "" {
-			target.Name = seasonName
-		}
-		if seasonOverview != "" {
-			target.Overview = seasonOverview
 		}
 		if season.Type.Name != "" {
 			target.Type = season.Type.Name

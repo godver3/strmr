@@ -4597,26 +4597,39 @@ export default function DetailsScreen() {
               )}
             </SpatialNavigationNode>
           )}
-          {/* TV Cast Section - SpatialNavigationVirtualizedList has its own internal SpatialNavigationNode */}
-          {Platform.isTV && TVCastSection && (isMetadataLoadingForSkeleton || credits) && (
-            <TVCastSection
-              credits={credits}
-              isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
-              maxCast={10}
-              onFocus={() => handleTVFocusAreaChange('cast')}
-              compactMargin
-              onCastMemberPress={handleCastMemberPress}
-            />
+          {/* TV Cast Section - always render wrapper node to maintain navigation order
+              (nodes register in DOM order, so late-loading content would otherwise end up at wrong position) */}
+          {Platform.isTV && TVCastSection && (
+            <SpatialNavigationNode orientation="horizontal" focusKey="details-cast-section">
+              {(isMetadataLoadingForSkeleton || credits) ? (
+                <TVCastSection
+                  credits={credits}
+                  isLoading={isSeries ? seriesDetailsLoading : movieDetailsLoading}
+                  maxCast={10}
+                  onFocus={() => handleTVFocusAreaChange('cast')}
+                  compactMargin
+                  onCastMemberPress={handleCastMemberPress}
+                />
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
           )}
-          {/* TV More Like This Section - SpatialNavigationVirtualizedList has its own internal SpatialNavigationNode */}
-          {Platform.isTV && TVMoreLikeThisSection && (similarLoading || similarContent.length > 0) && (
-            <TVMoreLikeThisSection
-              titles={similarContent}
-              isLoading={similarLoading}
-              maxTitles={20}
-              onFocus={() => handleTVFocusAreaChange('similar')}
-              onTitlePress={handleSimilarTitlePress}
-            />
+          {/* TV More Like This Section - always render wrapper node to maintain navigation order */}
+          {Platform.isTV && TVMoreLikeThisSection && (
+            <SpatialNavigationNode orientation="horizontal" focusKey="details-similar-section">
+              {(similarLoading || similarContent.length > 0) ? (
+                <TVMoreLikeThisSection
+                  titles={similarContent}
+                  isLoading={similarLoading}
+                  maxTitles={20}
+                  onFocus={() => handleTVFocusAreaChange('similar')}
+                  onTitlePress={handleSimilarTitlePress}
+                />
+              ) : (
+                <View />
+              )}
+            </SpatialNavigationNode>
           )}
           {!Platform.isTV && activeEpisode && (
             <View style={styles.episodeCardContainer}>

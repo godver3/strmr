@@ -162,7 +162,9 @@ const TVEpisodeCarousel = memo(function TVEpisodeCarousel({
                   styles.seasonChipText,
                   isSelected && styles.seasonChipTextSelected,
                   isFocused && styles.seasonChipTextFocused,
-                ]}>
+                ]}
+                numberOfLines={1}
+                ellipsizeMode="tail">
                 {seasonLabel}
               </Text>
             </View>
