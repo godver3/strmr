@@ -1064,6 +1064,7 @@ export default function DetailsScreen() {
           year: yearNumber || undefined,
           seasonNumber: targetEpisode?.seasonNumber,
           episodeNumber: targetEpisode?.episodeNumber,
+          absoluteEpisodeNumber: targetEpisode?.absoluteEpisodeNumber,
         });
 
         if (cancelled) {

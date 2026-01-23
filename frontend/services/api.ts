@@ -178,6 +178,7 @@ export interface SeriesEpisode {
   overview: string;
   seasonNumber: number;
   episodeNumber: number;
+  absoluteEpisodeNumber?: number;
   airedDate?: string;
   runtimeMinutes?: number;
   image?: Image;
@@ -531,6 +532,7 @@ export interface WatchStatusUpdate {
 export interface EpisodeReference {
   seasonNumber: number;
   episodeNumber: number;
+  absoluteEpisodeNumber?: number;
   episodeId?: string;
   tvdbId?: string;
   title?: string;
@@ -776,6 +778,7 @@ export interface PrequeueRequest {
   year?: number;
   seasonNumber?: number;
   episodeNumber?: number;
+  absoluteEpisodeNumber?: number; // For anime: absolute episode number (e.g., 1153 for One Piece)
   startOffset?: number; // Resume position in seconds for subtitle extraction
 }
 

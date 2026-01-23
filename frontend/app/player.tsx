@@ -2902,6 +2902,7 @@ export default function PlayerScreen() {
         userId: activeUserId,
         seasonNumber: nextEpisode.seasonNumber,
         episodeNumber: nextEpisode.episodeNumber,
+        absoluteEpisodeNumber: nextEpisode.absoluteEpisodeNumber,
       });
 
       nextEpisodePrequeueRef.current = {
@@ -2909,6 +2910,7 @@ export default function PlayerScreen() {
         targetEpisode: {
           seasonNumber: nextEpisode.seasonNumber,
           episodeNumber: nextEpisode.episodeNumber,
+          absoluteEpisodeNumber: nextEpisode.absoluteEpisodeNumber,
         },
         statusResponse: null,
         isShuffleEpisode,
