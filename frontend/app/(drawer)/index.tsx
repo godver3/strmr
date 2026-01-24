@@ -2143,6 +2143,7 @@ function IndexScreen() {
         autoFocus: boolean;
         collapseIfEmpty: boolean;
         showEmptyState: boolean;
+        cardLayout?: 'portrait' | 'landscape';
       }
     > = {
       'continue-watching': {
@@ -2150,6 +2151,7 @@ function IndexScreen() {
         autoFocus: true,
         collapseIfEmpty: true,
         showEmptyState: continueWatchingLoading,
+        cardLayout: 'landscape',
       },
       watchlist: {
         cards: watchlistCards,
@@ -2199,6 +2201,7 @@ function IndexScreen() {
           autoFocus: index === 0 && data.cards.length > 0,
           collapseIfEmpty: data.collapseIfEmpty,
           showEmptyState: data.showEmptyState,
+          cardLayout: data.cardLayout,
         };
       })
       .filter((shelf): shelf is NonNullable<typeof shelf> => shelf !== null);
@@ -2277,6 +2280,7 @@ function IndexScreen() {
         loading?: boolean;
         onItemPress: (item: Title) => void;
         onItemLongPress?: (item: Title) => void;
+        cardLayout?: 'portrait' | 'landscape';
       }
     > = {
       'continue-watching': {
@@ -2284,6 +2288,7 @@ function IndexScreen() {
         loading: continueWatchingLoading,
         onItemPress: handleContinueWatchingPress,
         onItemLongPress: handleContinueWatchingLongPress,
+        cardLayout: 'landscape',
       },
       watchlist: {
         titles: watchlistTitles,
@@ -2430,6 +2435,7 @@ function IndexScreen() {
                       onItemLongPress={data.onItemLongPress}
                       badgeVisibility={badgeVisibility}
                       watchStateIconStyle={watchStateIconStyle}
+                      cardLayout={data.cardLayout}
                     />
                   </View>
                 );
@@ -2634,31 +2640,35 @@ function IndexScreen() {
 
         <SpatialNavigationNode orientation="vertical" focusKey="home-shelves">
           <View key={navigationKey}>
-            {desktopShelves.map((shelf, shelfIndex) => (
-              <MemoizedDesktopShelf
-                key={shelf.key}
-                title={shelf.title}
-                cards={shelf.cards}
-                styles={desktopStyles!.styles}
-                cardWidth={desktopStyles!.cardWidth}
-                cardHeight={desktopStyles!.cardHeight}
-                cardSpacing={desktopStyles!.cardSpacing}
-                shelfPadding={desktopStyles!.shelfPadding}
-                onCardSelect={handleCardSelect}
-                onShelfItemFocus={handleShelfItemFocus}
-                autoFocus={shelf.autoFocus && shelf.cards.length > 0}
-                collapseIfEmpty={shelf.collapseIfEmpty}
-                showEmptyState={shelf.showEmptyState}
-                shelfKey={shelf.key}
-                shelfIndex={shelfIndex}
-                registerShelfRef={registerShelfRef}
-                registerShelfFlatListRef={registerShelfFlatListRef}
-                isInitialLoad={isInitialLoadRef.current}
-                badgeVisibility={badgeVisibility}
-                watchStateIconStyle={watchStateIconStyle}
-                onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
-              />
-            ))}
+            {desktopShelves.map((shelf, shelfIndex) => {
+              const isLandscape = shelf.cardLayout === 'landscape';
+              return (
+                <MemoizedDesktopShelf
+                  key={shelf.key}
+                  title={shelf.title}
+                  cards={shelf.cards}
+                  styles={desktopStyles!.styles}
+                  cardWidth={isLandscape ? desktopStyles!.landscapeCardWidth : desktopStyles!.cardWidth}
+                  cardHeight={isLandscape ? desktopStyles!.landscapeCardHeight : desktopStyles!.cardHeight}
+                  cardSpacing={desktopStyles!.cardSpacing}
+                  shelfPadding={desktopStyles!.shelfPadding}
+                  onCardSelect={handleCardSelect}
+                  onShelfItemFocus={handleShelfItemFocus}
+                  autoFocus={shelf.autoFocus && shelf.cards.length > 0}
+                  collapseIfEmpty={shelf.collapseIfEmpty}
+                  showEmptyState={shelf.showEmptyState}
+                  shelfKey={shelf.key}
+                  shelfIndex={shelfIndex}
+                  registerShelfRef={registerShelfRef}
+                  registerShelfFlatListRef={registerShelfFlatListRef}
+                  isInitialLoad={isInitialLoadRef.current}
+                  badgeVisibility={badgeVisibility}
+                  watchStateIconStyle={watchStateIconStyle}
+                  onFirstItemTagChange={shelf.autoFocus ? setFirstContentFocusableTag : undefined}
+                  cardLayout={shelf.cardLayout}
+                />
+              );
+            })}
           </View>
         </SpatialNavigationNode>
       </Animated.ScrollView>
@@ -2805,11 +2815,13 @@ type ShelfCardContentProps = {
   showUnwatchedCount: boolean;
   watchStateIconStyle: 'colored' | 'white';
   styles: ReturnType<typeof createDesktopStyles>['styles'];
+  cardLayout?: 'portrait' | 'landscape';
 };
 
 const ShelfCardContent = React.memo(
-  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles }: ShelfCardContentProps) {
+  function ShelfCardContent({ card, cardKey, isFocused, isLastItem, showReleaseStatus, showWatchState, showUnwatchedCount, watchStateIconStyle, styles, cardLayout = 'portrait' }: ShelfCardContentProps) {
     const isExploreCard = card.mediaType === 'explore' && card.collagePosters && card.collagePosters.length >= 4;
+    const isLandscape = cardLayout === 'landscape';
 
     // Compute watch state icon (using MaterialCommunityIcons names)
     const getWatchStateIcon = () => {
@@ -2835,9 +2847,19 @@ const ShelfCardContent = React.memo(
     // Determine if we need the top-left badge container (combines watch state + release status + unwatched count)
     const hasTopLeftBadge = (showReleaseStatus && card.releaseIcon) || watchStateData || hasUnwatchedCount;
 
+    // Calculate progress bar visibility (only show if >5% progress)
+    const showProgressBar = isLandscape && card.percentWatched !== undefined && card.percentWatched >= MIN_CONTINUE_WATCHING_PERCENT && card.percentWatched < 100;
+
+    // For landscape cards, prefer backdrop image over poster
+    const landscapeImage = card.backdropUrl || card.headerImage || card.cardImage;
+
     return (
       <View
-        style={[styles.card, isFocused && styles.cardFocused, !isLastItem && styles.cardSpacing]}
+        style={[
+          isLandscape ? styles.landscapeCard : styles.card,
+          isFocused && styles.cardFocused,
+          !isLastItem && styles.cardSpacing,
+        ]}
         // @ts-ignore - Android TV performance optimization
         renderToHardwareTextureAndroid={isAndroidTV}>
         {isExploreCard ? (
@@ -2869,6 +2891,42 @@ const ShelfCardContent = React.memo(
                 <Text style={isAndroidTV ? styles.cardMetaAndroidTV : styles.cardMeta}>{card.year}</Text>
               ) : null}
             </View>
+          </>
+        ) : isLandscape ? (
+          <>
+            {/* Landscape card layout with progress bar */}
+            <Image
+              key={`img-${cardKey}`}
+              source={landscapeImage}
+              style={styles.cardImage}
+              contentFit="cover"
+              transition={0}
+              cachePolicy="disk"
+              recyclingKey={cardKey}
+            />
+            <View style={styles.landscapeCardTextContainer}>
+              <LinearGradient
+                pointerEvents="none"
+                colors={isAndroidTV ? GRADIENT_COLORS_ANDROID_TV : GRADIENT_COLORS_DEFAULT}
+                locations={isAndroidTV ? GRADIENT_LOCATIONS_ANDROID_TV : GRADIENT_LOCATIONS_DEFAULT}
+                start={GRADIENT_START}
+                end={GRADIENT_END}
+                style={styles.cardTextGradient}
+              />
+              <Text style={isAndroidTV ? styles.landscapeCardTitleAndroidTV : styles.landscapeCardTitle} numberOfLines={1}>
+                {card.title}
+              </Text>
+              {card.year ? (
+                <Text style={isAndroidTV ? styles.landscapeCardMetaAndroidTV : styles.landscapeCardMeta}>{card.year}</Text>
+              ) : null}
+            </View>
+            {/* Progress bar at bottom */}
+            {showProgressBar && (
+              <View style={styles.progressBarContainer}>
+                <View style={styles.progressBarBackground} />
+                <View style={[styles.progressBarFill, { width: `${card.percentWatched ?? 0}%` }]} />
+              </View>
+            )}
           </>
         ) : (
           <>
@@ -2947,6 +3005,7 @@ const ShelfCardContent = React.memo(
       prev.card.id === next.card.id &&
       prev.card.title === next.card.title &&
       prev.card.cardImage === next.card.cardImage &&
+      prev.card.backdropUrl === next.card.backdropUrl &&
       prev.card.percentWatched === next.card.percentWatched &&
       prev.card.releaseIcon === next.card.releaseIcon &&
       prev.card.year === next.card.year &&
@@ -2958,7 +3017,8 @@ const ShelfCardContent = React.memo(
       prev.showReleaseStatus === next.showReleaseStatus &&
       prev.showWatchState === next.showWatchState &&
       prev.showUnwatchedCount === next.showUnwatchedCount &&
-      prev.watchStateIconStyle === next.watchStateIconStyle
+      prev.watchStateIconStyle === next.watchStateIconStyle &&
+      prev.cardLayout === next.cardLayout
     );
   },
 );
@@ -2984,6 +3044,7 @@ type VirtualizedShelfProps = {
   badgeVisibility?: string[]; // Which badges to show: watchProgress, releaseStatus
   watchStateIconStyle?: 'colored' | 'white'; // Icon color style for watch state badges
   onFirstItemTagChange?: (tag: number | null) => void; // Report first card's native tag (for drawer focus)
+  cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait)
 };
 
 // Alias for backwards compatibility
@@ -3015,6 +3076,7 @@ function VirtualizedShelf({
   badgeVisibility,
   watchStateIconStyle = 'colored',
   onFirstItemTagChange: _onFirstItemTagChange,
+  cardLayout = 'portrait',
 }: VirtualizedShelfProps) {
   if (DEBUG_INDEX_RENDERS) {
     console.log(`[IndexPage] VirtualizedShelf render: ${shelfKey} (${cards.length} cards)`);
@@ -3145,6 +3207,7 @@ function VirtualizedShelf({
                 showUnwatchedCount={showUnwatchedCount}
                 watchStateIconStyle={watchStateIconStyle}
                 styles={styles}
+                cardLayout={cardLayout}
               />
             )}
           </SpatialNavigationFocusableView>
@@ -3175,12 +3238,13 @@ function VirtualizedShelf({
               showUnwatchedCount={showUnwatchedCount}
               watchStateIconStyle={watchStateIconStyle}
               styles={styles}
+              cardLayout={cardLayout}
             />
           )}
         </Pressable>
       );
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout],
   );
 
   // Calculate row height for the virtualized list container
@@ -3214,6 +3278,7 @@ function VirtualizedShelf({
               showUnwatchedCount={showUnwatchedCount}
               watchStateIconStyle={watchStateIconStyle}
               styles={styles}
+              cardLayout={cardLayout}
             />
           )}
         </SpatialNavigationFocusableView>
@@ -3225,7 +3290,7 @@ function VirtualizedShelf({
       }
       return cardElement;
     },
-    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle],
+    [autoFocus, shelfHandlers, styles, badgeVisibility, shelfKey, showWatchState, showUnwatchedCount, watchStateIconStyle, cardLayout],
   );
 
   // Early return for collapsed shelves - must be after all hooks
@@ -3335,7 +3400,8 @@ function areDesktopShelfPropsEqual(prev: DesktopShelfProps, next: DesktopShelfPr
     prev.cardSpacing === next.cardSpacing &&
     prev.shelfPadding === next.shelfPadding &&
     prev.badgeVisibility === next.badgeVisibility &&
-    prev.onFirstItemTagChange === next.onFirstItemTagChange
+    prev.onFirstItemTagChange === next.onFirstItemTagChange &&
+    prev.cardLayout === next.cardLayout
   );
 }
 
@@ -3368,6 +3434,11 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
   const calculatedCardHeight = Math.max(minCardHeight, targetCardHeight);
   const cardHeight = Math.round(calculatedCardHeight * tvCardScaleFactor);
   const cardWidth = Math.round(cardHeight * (2 / 3)); // Standard 2:3 poster ratio
+
+  // Landscape card dimensions (16:9 ratio) for continue watching shelf
+  // Height is ~60% of portrait card height to keep similar visual weight
+  const landscapeCardHeight = Math.round(cardHeight * 0.6);
+  const landscapeCardWidth = Math.round(landscapeCardHeight * (16 / 9)); // 16:9 aspect ratio
 
   // Progress badge scaling - designed for tvOS at 1.25x, Android TV at 1.3x
   const badgeScale = isTV ? 1.25 * tvScale : 1.0;
@@ -3657,6 +3728,94 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
       textAlign: 'center',
       paddingHorizontal: theme.spacing.md,
     },
+    // Landscape card styles (for continue watching shelf)
+    landscapeCard: {
+      width: landscapeCardWidth,
+      height: landscapeCardHeight,
+      borderRadius: theme.radius.md,
+      overflow: 'hidden',
+      backgroundColor: theme.colors.background.surface,
+      borderWidth: 3,
+      borderColor: 'transparent',
+    },
+    landscapeCardTextContainer: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      padding: theme.spacing.md,
+      paddingBottom: theme.spacing.md + 4, // Extra padding for progress bar
+      gap: theme.spacing.xs,
+      alignItems: 'flex-start',
+      justifyContent: 'flex-end',
+      minHeight: '50%',
+    },
+    landscapeCardTitle: {
+      ...(isTV ? theme.typography.body.md : theme.typography.body.md),
+      ...(isTV
+        ? {
+            fontSize: Math.round(theme.typography.body.md.fontSize * 1.4 * tvScale),
+            lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.4 * tvScale),
+          }
+        : null),
+      color: theme.colors.text.primary,
+      textAlign: 'left',
+      zIndex: 1,
+      fontWeight: '600',
+    },
+    landscapeCardTitleAndroidTV: {
+      ...theme.typography.body.md,
+      fontSize: Math.round(theme.typography.body.md.fontSize * 1.4 * androidTVTitleScale),
+      lineHeight: Math.round(theme.typography.body.md.lineHeight * 1.4 * androidTVTitleScale),
+      color: theme.colors.text.primary,
+      textAlign: 'left',
+      zIndex: 1,
+      fontWeight: '600',
+    },
+    landscapeCardMeta: {
+      ...(isTV ? theme.typography.body.sm : theme.typography.caption.sm),
+      ...(isTV
+        ? {
+            fontSize: Math.round(theme.typography.body.sm.fontSize * 1.2 * tvScale),
+            lineHeight: Math.round(theme.typography.body.sm.lineHeight * 1.2 * tvScale),
+          }
+        : null),
+      color: theme.colors.text.secondary,
+      textAlign: 'left',
+      zIndex: 1,
+    },
+    landscapeCardMetaAndroidTV: {
+      ...theme.typography.body.sm,
+      fontSize: Math.round(theme.typography.body.sm.fontSize * 1.2 * androidTVMetaScale),
+      lineHeight: Math.round(theme.typography.body.sm.lineHeight * 1.2 * androidTVMetaScale),
+      color: theme.colors.text.secondary,
+      textAlign: 'left',
+      zIndex: 1,
+    },
+    // Progress bar styles (at bottom of landscape card)
+    progressBarContainer: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: 4,
+      zIndex: 3,
+    },
+    progressBarBackground: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    },
+    progressBarFill: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      bottom: 0,
+      backgroundColor: theme.colors.accent.primary,
+    },
     progressBadge: {
       position: 'absolute',
       top: theme.spacing.md,
@@ -3855,6 +4014,8 @@ function createDesktopStyles(theme: NovaTheme, screenHeight: number) {
     styles,
     cardWidth,
     cardHeight,
+    landscapeCardWidth,
+    landscapeCardHeight,
     cardSpacing,
     shelfPadding,
   };

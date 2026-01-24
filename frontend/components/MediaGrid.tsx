@@ -63,6 +63,7 @@ interface MediaGridProps {
   onItemFocus?: (index: number) => void; // Called when an item receives focus (TV) - index is the item's position in the list
   ListHeaderComponent?: React.ReactElement | null; // Component to render above the list (scrolls with content)
   listKey?: string; // Key suffix to force spatial navigation recalculation when list order changes
+  cardLayout?: 'portrait' | 'landscape'; // Card layout style (default: portrait, landscape for continue watching)
 }
 
 // Static styles for MinimalCard - avoids object creation per render
@@ -397,6 +398,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
     onItemFocus,
     ListHeaderComponent,
     listKey,
+    cardLayout = 'portrait',
   }, ref) {
     const theme = useTheme();
     const { width: screenWidth, height: screenHeight } = useTVDimensions();
@@ -738,27 +740,143 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
         // Carousel layout for mobile (horizontal scroll)
         // Android: aggressive virtualization to reduce memory pressure
         const isAndroid = Platform.OS === 'android';
+        const isLandscapeLayout = cardLayout === 'landscape';
+
+        // Landscape cards are wider (16:9 ratio), portrait are taller (2:3 ratio)
+        const landscapeCardWidth = Math.round(carouselCardWidth * 1.6); // Wider for landscape
+        const landscapeCardHeight = Math.round(landscapeCardWidth * (9 / 16)); // 16:9 aspect ratio
+        const portraitCardHeight = Math.round(carouselCardWidth * 1.5); // 2:3 aspect ratio
+
+        const actualCardWidth = isLandscapeLayout ? landscapeCardWidth : carouselCardWidth;
+        const actualCardHeight = isLandscapeLayout ? landscapeCardHeight : portraitCardHeight;
+
         return (
           <FlatList
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={[styles.carouselContent, styles.carouselContentCompact]}
             data={items}
-            extraData={[badgeVisibility, carouselCardWidth]}
+            extraData={[badgeVisibility, carouselCardWidth, cardLayout]}
             keyExtractor={keyExtractor}
             initialNumToRender={isAndroid ? 3 : 5}
             maxToRenderPerBatch={isAndroid ? 2 : 5}
             windowSize={isAndroid ? 2 : 3}
             removeClippedSubviews={isAndroid}
             renderItem={({ item, index }) => {
-              // Calculate card height based on 2:3 aspect ratio
-              const cardHeight = Math.round(carouselCardWidth * 1.5);
+              // For landscape cards, render custom card with progress bar
+              if (isLandscapeLayout) {
+                const percentWatched = (item as any).percentWatched as number | undefined;
+                const showProgressBar = percentWatched !== undefined && percentWatched >= 5 && percentWatched < 100;
+                const imageUrl = item.backdrop?.url || item.poster?.url;
+
+                return (
+                  <Pressable
+                    style={[
+                      {
+                        width: actualCardWidth,
+                        height: actualCardHeight,
+                        marginRight: index === items.length - 1 ? 0 : gap,
+                        borderRadius: theme.radius.md,
+                        overflow: 'hidden',
+                        backgroundColor: theme.colors.background.surface,
+                      },
+                    ]}
+                    onPress={() => onItemPress?.(item)}
+                    onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}>
+                    {imageUrl ? (
+                      <CachedImage
+                        source={imageUrl}
+                        style={{ width: '100%', height: '100%', position: 'absolute' }}
+                        contentFit="cover"
+                        transition={0}
+                      />
+                    ) : (
+                      <View style={{ flex: 1, backgroundColor: theme.colors.background.elevated }} />
+                    )}
+                    {/* Text container with gradient */}
+                    <View
+                      style={{
+                        position: 'absolute',
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        paddingHorizontal: theme.spacing.sm,
+                        paddingTop: theme.spacing.lg,
+                        paddingBottom: showProgressBar ? theme.spacing.sm + 4 : theme.spacing.sm,
+                      }}>
+                      <LinearGradient
+                        pointerEvents="none"
+                        colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
+                        locations={[0, 0.5, 1]}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                      />
+                      <Text
+                        style={{
+                          ...theme.typography.body.sm,
+                          color: theme.colors.text.primary,
+                          fontWeight: '600',
+                          zIndex: 1,
+                        }}
+                        numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      {item.year ? (
+                        <Text
+                          style={{
+                            ...theme.typography.caption.sm,
+                            color: theme.colors.text.secondary,
+                            zIndex: 1,
+                          }}>
+                          {item.year}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {/* Progress bar at bottom */}
+                    {showProgressBar && (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: 4,
+                          zIndex: 3,
+                        }}>
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            backgroundColor: 'rgba(255, 255, 255, 0.4)',
+                          }}
+                        />
+                        <View
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            bottom: 0,
+                            width: `${percentWatched}%`,
+                            backgroundColor: theme.colors.accent.primary,
+                          }}
+                        />
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              }
+
+              // Portrait cards use MediaItem
               return (
                 <View
                   style={[
                     styles.carouselItem,
                     {
-                      width: carouselCardWidth,
+                      width: actualCardWidth,
                       marginRight: index === items.length - 1 ? 0 : gap,
                     },
                   ]}>
@@ -768,7 +886,7 @@ const MediaGrid = forwardRef<MediaGridHandle, MediaGridProps>(function MediaGrid
                     onLongPress={onItemLongPress ? () => onItemLongPress(item) : undefined}
                     badgeVisibility={badgeVisibility}
                     watchStateIconStyle={watchStateIconStyle}
-                    style={{ width: carouselCardWidth, height: cardHeight }}
+                    style={{ width: actualCardWidth, height: actualCardHeight }}
                   />
                 </View>
               );
@@ -954,7 +1072,8 @@ const MemoizedMediaGrid = React.memo(MediaGrid, (prevProps, nextProps) => {
     prevProps.useMinimalCards === nextProps.useMinimalCards &&
     prevProps.loadingMore === nextProps.loadingMore &&
     prevProps.hasMoreItems === nextProps.hasMoreItems &&
-    prevProps.listKey === nextProps.listKey
+    prevProps.listKey === nextProps.listKey &&
+    prevProps.cardLayout === nextProps.cardLayout
     // onItemPress and onEndReached are omitted - function reference changes are expected
   );
 });
