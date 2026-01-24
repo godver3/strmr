@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/mediaresolve"
 	"novastream/models"
 )
 
@@ -135,13 +136,18 @@ func (z *ZileanScraper) Search(ctx context.Context, req SearchRequest) ([]Scrape
 		return nil, nil
 	}
 
-	log.Printf("[zilean] Search called with Query=%q, ParsedTitle=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s",
-		req.Query, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.Parsed.Year, req.Parsed.MediaType)
+	log.Printf("[zilean] Search called with Query=%q, ParsedTitle=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s, IsDaily=%v, TargetAirDate=%q",
+		req.Query, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.Parsed.Year, req.Parsed.MediaType, req.IsDaily, req.TargetAirDate)
 
 	var results []ScrapeResult
 	var err error
 
-	if req.Parsed.MediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
+	// For daily shows, search adjacent episodes (N-1, N, N+1) and filter by date
+	// This handles TMDB/TVDB episode numbering offset
+	isDailySearch := req.IsDaily && req.Parsed.MediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 && req.TargetAirDate != ""
+	if isDailySearch {
+		results, err = z.searchDailyTV(ctx, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.TargetAirDate)
+	} else if req.Parsed.MediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
 		// TV show search: title + season + episode
 		results, err = z.searchTV(ctx, cleanTitle, req.Parsed.Season, req.Parsed.Episode, false)
 	} else if req.Parsed.MediaType == MediaTypeMovie || req.Parsed.Year > 0 {
@@ -186,17 +192,78 @@ func (z *ZileanScraper) searchMovie(ctx context.Context, title string, year int)
 func (z *ZileanScraper) searchTV(ctx context.Context, title string, season, episode int, multi bool) ([]ScrapeResult, error) {
 	params := url.Values{}
 	params.Set("Query", title)
-	
+
 	if season > 0 {
 		params.Set("Season", strconv.Itoa(season))
 	}
-	
+
 	if episode > 0 && !multi {
 		params.Set("Episode", strconv.Itoa(episode))
 	}
 
 	log.Printf("[zilean] TV search: Query=%q, Season=%d, Episode=%d, Multi=%v", title, season, episode, multi)
 	return z.fetchResults(ctx, params)
+}
+
+// searchDailyTV searches adjacent episodes for daily shows and filters by date.
+// This handles TMDB/TVDB episode numbering offset by trying N-1, N, N+1.
+func (z *ZileanScraper) searchDailyTV(ctx context.Context, title string, season, episode int, targetAirDate string) ([]ScrapeResult, error) {
+	log.Printf("[zilean] Daily show detected, will try E%d, E%d, E%d for target date %s",
+		episode-1, episode, episode+1, targetAirDate)
+
+	// Try episodes N-1, N, N+1 (TMDB may have ±1 episode offset from TVDB)
+	episodesToSearch := []int{}
+	if episode > 1 {
+		episodesToSearch = append(episodesToSearch, episode-1)
+	}
+	episodesToSearch = append(episodesToSearch, episode)
+	episodesToSearch = append(episodesToSearch, episode+1)
+
+	var allResults []ScrapeResult
+	seen := make(map[string]struct{})
+
+	for _, ep := range episodesToSearch {
+		params := url.Values{}
+		params.Set("Query", title)
+		params.Set("Season", strconv.Itoa(season))
+		params.Set("Episode", strconv.Itoa(ep))
+
+		log.Printf("[zilean] Daily TV search: Query=%q, Season=%d, Episode=%d (target date: %s)", title, season, ep, targetAirDate)
+		results, err := z.fetchResults(ctx, params)
+		if err != nil {
+			log.Printf("[zilean] Error searching E%d: %v", ep, err)
+			continue
+		}
+
+		// Filter results by target air date
+		var dateMatchResults []ScrapeResult
+		foundCorrectDate := false
+		for _, result := range results {
+			// Deduplicate by infohash
+			infoHash := strings.ToLower(result.InfoHash)
+			if _, exists := seen[infoHash]; exists {
+				continue
+			}
+			seen[infoHash] = struct{}{}
+
+			// Check if this result matches the target date
+			if mediaresolve.CandidateMatchesDailyDate(result.Title, targetAirDate, 0) {
+				foundCorrectDate = true
+				dateMatchResults = append(dateMatchResults, result)
+			}
+		}
+
+		allResults = append(allResults, dateMatchResults...)
+
+		// If we found results with the correct date, stop searching
+		if foundCorrectDate {
+			log.Printf("[zilean] Found %d results matching target date %s at episode %d, stopping search",
+				len(dateMatchResults), targetAirDate, ep)
+			break
+		}
+	}
+
+	return allResults, nil
 }
 
 // searchGeneric performs a basic text search.

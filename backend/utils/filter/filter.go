@@ -9,6 +9,7 @@ import (
 
 	"github.com/mozillazg/go-unidecode"
 
+	"novastream/internal/mediaresolve"
 	"novastream/models"
 	"novastream/utils/parsett"
 	"novastream/utils/similarity"
@@ -97,9 +98,11 @@ type Options struct {
 	TotalSeriesEpisodes int                    // Deprecated: use EpisodeResolver instead
 	EpisodeResolver     EpisodeCountResolver   // Resolver for accurate episode counts from metadata
 	// Target episode filtering (for TV shows)
-	TargetSeason          int // Target season number (e.g., 22 for S22E68)
-	TargetEpisode         int // Target episode number within season (e.g., 68 for S22E68)
-	TargetAbsoluteEpisode int // Target absolute episode number for anime (e.g., 1153 for One Piece)
+	TargetSeason          int    // Target season number (e.g., 22 for S22E68)
+	TargetEpisode         int    // Target episode number within season (e.g., 68 for S22E68)
+	TargetAbsoluteEpisode int    // Target absolute episode number for anime (e.g., 1153 for One Piece)
+	IsDaily               bool   // True for daily shows (talk shows, news) - filter by date
+	TargetAirDate         string // For daily shows: air date in YYYY-MM-DD format
 }
 
 // filteredResult holds a result with its HDR status for sorting
@@ -227,6 +230,14 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			}
 		}
 
+		// For daily shows, filter out results that don't match the target air date
+		if opts.IsDaily && opts.TargetAirDate != "" {
+			if !mediaresolve.CandidateMatchesDailyDate(result.Title, opts.TargetAirDate, 0) {
+				log.Printf("[filter] Rejecting %q: daily show date doesn't match target %s", result.Title, opts.TargetAirDate)
+				continue
+			}
+		}
+
 		// Get the parsed result from the batch
 		parsed := parsedMap[result.Title]
 		if parsed == nil {
@@ -273,9 +284,12 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 			continue
 		}
 
-		if !opts.IsMovie && !hasTVPattern && !isCompletePack && !hasEpisodeResolver {
+		// For daily shows, date-based results are valid even without S##E## pattern
+		hasDailyDate := opts.IsDaily && opts.TargetAirDate != "" && mediaresolve.CandidateMatchesDailyDate(result.Title, opts.TargetAirDate, 0)
+
+		if !opts.IsMovie && !hasTVPattern && !isCompletePack && !hasEpisodeResolver && !hasDailyDate {
 			// Searching for a TV show but result has no TV indicators, isn't a complete pack,
-			// and we don't have an episode resolver to map files to episodes
+			// we don't have an episode resolver to map files to episodes, and it's not a daily show with matching date
 			log.Printf("[filter] Rejecting %q: searching for TV show but result has no season/episode info",
 				result.Title)
 			continue
@@ -283,7 +297,8 @@ func Results(results []models.NZBResult, opts Options) []models.NZBResult {
 
 		// Target episode filtering for TV shows
 		// This rejects season packs and episodes that obviously can't contain the target episode
-		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetAbsoluteEpisode > 0) {
+		// Skip this check for daily shows with matching dates - they use date-based matching instead
+		if !opts.IsMovie && (opts.TargetSeason > 0 || opts.TargetAbsoluteEpisode > 0) && !hasDailyDate {
 			if rejected, reason := shouldRejectByTargetEpisode(parsed, opts); rejected {
 				log.Printf("[filter] Rejecting %q: %s", result.Title, reason)
 				continue

@@ -707,10 +707,17 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 			targetCode := mediaresolve.EpisodeCode{Season: hints.TargetSeason, Episode: hints.TargetEpisode}
 			matchesSeasonEpisode := mediaresolve.CandidateMatchesEpisode(candidates[0].label, targetCode)
 			matchesAbsolute := hints.AbsoluteEpisodeNumber > 0 && mediaresolve.CandidateMatchesAbsoluteEpisode(candidates[0].label, hints.AbsoluteEpisodeNumber)
+			// For daily shows, use exact date match only - no tolerance.
+			// Adjacent dates are different episodes, so tolerance would match the WRONG episode.
+			matchesDailyDate := hints.IsDaily && hints.TargetAirDate != "" &&
+				mediaresolve.CandidateMatchesDailyDate(candidates[0].label, hints.TargetAirDate, 0)
 
-			if !matchesSeasonEpisode && !matchesAbsolute {
+			if !matchesSeasonEpisode && !matchesAbsolute && !matchesDailyDate {
 				var rejectionMsg string
-				if hints.AbsoluteEpisodeNumber > 0 {
+				if hints.IsDaily && hints.TargetAirDate != "" {
+					rejectionMsg = fmt.Sprintf("single file %q does not match target S%02dE%02d or date %s",
+						candidates[0].label, hints.TargetSeason, hints.TargetEpisode, hints.TargetAirDate)
+				} else if hints.AbsoluteEpisodeNumber > 0 {
 					rejectionMsg = fmt.Sprintf("single file %q does not match target S%02dE%02d or absolute ep %d",
 						candidates[0].label, hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber)
 				} else {
@@ -724,7 +731,9 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 			}
 
 			// Log which matching method succeeded
-			if matchesAbsolute && !matchesSeasonEpisode {
+			if matchesDailyDate && !matchesSeasonEpisode && !matchesAbsolute {
+				log.Printf("[debrid-playback] single file matched by daily date %s", hints.TargetAirDate)
+			} else if matchesAbsolute && !matchesSeasonEpisode {
 				log.Printf("[debrid-playback] single file matched by absolute episode %d", hints.AbsoluteEpisodeNumber)
 			}
 		}
@@ -760,7 +769,9 @@ func selectMediaFiles(files []File, hints mediaresolve.SelectionHints) *mediaFil
 		// In this case, reject the result entirely rather than falling back
 		if hints.TargetEpisode > 0 && hints.TargetSeason > 0 {
 			var rejectionMsg string
-			if hints.AbsoluteEpisodeNumber > 0 {
+			if hints.IsDaily && hints.TargetAirDate != "" {
+				rejectionMsg = fmt.Sprintf("target episode S%02dE%02d (date: %s) not found in torrent", hints.TargetSeason, hints.TargetEpisode, hints.TargetAirDate)
+			} else if hints.AbsoluteEpisodeNumber > 0 {
 				rejectionMsg = fmt.Sprintf("target episode S%02dE%02d (abs: %d) not found in torrent", hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber)
 			} else {
 				rejectionMsg = fmt.Sprintf("target episode S%02dE%02d not found in torrent", hints.TargetSeason, hints.TargetEpisode)

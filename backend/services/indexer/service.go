@@ -408,6 +408,8 @@ type SearchOptions struct {
 	TotalSeriesEpisodes   int                         // Deprecated: use EpisodeResolver instead
 	EpisodeResolver       filter.EpisodeCountResolver // Optional: resolver for accurate episode counts from metadata
 	AbsoluteEpisodeNumber int                         // Optional: absolute episode number for anime (e.g., 1153 for One Piece)
+	IsDaily               bool                        // True for daily shows (talk shows, news) that use date-based naming
+	TargetAirDate         string                      // For daily shows: air date in YYYY-MM-DD format
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
@@ -487,6 +489,8 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
 				EpisodeResolver:       opts.EpisodeResolver,
 				AbsoluteEpisodeNumber: opts.AbsoluteEpisodeNumber,
+				IsDaily:               opts.IsDaily,
+				TargetAirDate:         opts.TargetAirDate,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
 			if err != nil {
@@ -586,6 +590,22 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		aggregated = aggregated[:opts.MaxResults]
 	}
 
+	// Add daily show attributes to all results for file matching
+	if opts.IsDaily || opts.TargetAirDate != "" {
+		for i := range aggregated {
+			if aggregated[i].Attributes == nil {
+				aggregated[i].Attributes = make(map[string]string)
+			}
+			if opts.IsDaily {
+				aggregated[i].Attributes["isDaily"] = "true"
+			}
+			if opts.TargetAirDate != "" {
+				aggregated[i].Attributes["targetAirDate"] = opts.TargetAirDate
+			}
+		}
+		log.Printf("[indexer] Added daily show attributes to %d results: isDaily=%v, airDate=%q", len(aggregated), opts.IsDaily, opts.TargetAirDate)
+	}
+
 	return aggregated, nil
 }
 
@@ -683,8 +703,40 @@ func buildSearchQueries(opts SearchOptions, parsed debrid.ParsedQuery, alternate
 		queries = append(queries, trimmed)
 	}
 
+	// For daily shows, prioritize date-based queries over S##E## format
+	// Scene releases use format: "Show.Name.2026.01.21.Guest.Name.mkv"
+	if opts.IsDaily && opts.TargetAirDate != "" {
+		dateParts := strings.Split(opts.TargetAirDate, "-")
+		if len(dateParts) == 3 {
+			year := dateParts[0]
+			month := dateParts[1]
+			day := dateParts[2]
+
+			// Add date-format queries FIRST (highest priority)
+			addDateQueries := func(title string) {
+				title = strings.TrimSpace(title)
+				if title == "" {
+					return
+				}
+				// Format: "Title 2026.01.21" (dot-separated, most common in scene releases)
+				addQuery(fmt.Sprintf("%s %s.%s.%s", title, year, month, day))
+				// Format: "Title 2026 01 21" (space-separated)
+				addQuery(fmt.Sprintf("%s %s %s %s", title, year, month, day))
+			}
+
+			addDateQueries(parsed.Title)
+			for _, alt := range alternateTitles {
+				addDateQueries(alt)
+			}
+
+			log.Printf("[indexer] Added date-based queries for daily show (priority): date=%s", opts.TargetAirDate)
+		}
+	}
+
+	// Add the original query
 	addQuery(opts.Query)
 
+	// Add S##E## variants (for non-daily shows, or as fallback for daily shows)
 	addVariants := func(title string) {
 		for _, variant := range titleVariants(title) {
 			composed := composeQueryForSearch(variant, opts, parsed)
@@ -1024,10 +1076,12 @@ func (s *Service) applyUsenetFilteringWithSettings(results []models.NZBResult, o
 		PrioritizeHdr:    models.BoolVal(filterSettings.PrioritizeHdr, false),
 		AlternateTitles:  alternateTitles,
 		FilterOutTerms:   filterSettings.FilterOutTerms,
+		IsDaily:          opts.IsDaily,
+		TargetAirDate:    opts.TargetAirDate,
 	}
 
-	log.Printf("[indexer/usenet] Applying filter with title=%q, year=%d, isMovie=%t",
-		filterOpts.ExpectedTitle, filterOpts.ExpectedYear, filterOpts.IsMovie)
+	log.Printf("[indexer/usenet] Applying filter with title=%q, year=%d, isMovie=%t, isDaily=%t, airDate=%q",
+		filterOpts.ExpectedTitle, filterOpts.ExpectedYear, filterOpts.IsMovie, filterOpts.IsDaily, filterOpts.TargetAirDate)
 
 	return filter.Results(results, filterOpts)
 }

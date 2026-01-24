@@ -555,6 +555,9 @@ type tvdbSeriesExtendedData struct {
 	Status struct {
 		Name string `json:"name"` // "Continuing", "Ended", "Upcoming"
 	} `json:"status"`
+	// Type indicates the series type from TVDB (e.g., "scripted", "reality", "documentary", "talk_show", "news", "game_show")
+	// Used to detect daily shows that use date-based episode naming in scene releases
+	Type string `json:"type"`
 }
 
 type tvdbMovieExtendedData struct {

@@ -42,6 +42,16 @@ func buildSelectionHints(candidate models.NZBResult, directory string) mediareso
 		hints.AbsoluteEpisodeNumber = absEpisode
 	}
 
+	// Daily show detection - check isDaily attribute
+	if isDaily := strings.TrimSpace(attrs["isDaily"]); isDaily == "true" {
+		hints.IsDaily = true
+	}
+
+	// Air date for daily shows - used for date-based file matching
+	if airDate := strings.TrimSpace(attrs["targetAirDate"]); airDate != "" {
+		hints.TargetAirDate = airDate
+	}
+
 	if hints.TargetEpisodeCode == "" && hints.TargetSeason > 0 && hints.TargetEpisode > 0 {
 		hints.TargetEpisodeCode = fmt.Sprintf("S%02dE%02d", hints.TargetSeason, hints.TargetEpisode)
 	}
@@ -51,8 +61,8 @@ func buildSelectionHints(candidate models.NZBResult, directory string) mediareso
 	}
 
 	// Debug logging
-	fmt.Printf("[selection-hints] Final hints: Season=%d, Episode=%d, AbsoluteEp=%d, Code=%q, ReleaseTitle=%q\n",
-		hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber, hints.TargetEpisodeCode, hints.ReleaseTitle)
+	fmt.Printf("[selection-hints] Final hints: Season=%d, Episode=%d, AbsoluteEp=%d, Code=%q, ReleaseTitle=%q, IsDaily=%v, AirDate=%q\n",
+		hints.TargetSeason, hints.TargetEpisode, hints.AbsoluteEpisodeNumber, hints.TargetEpisodeCode, hints.ReleaseTitle, hints.IsDaily, hints.TargetAirDate)
 
 	return hints
 }

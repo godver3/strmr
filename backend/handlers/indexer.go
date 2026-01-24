@@ -62,13 +62,23 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create episode resolver for TV shows to enable accurate pack size filtering
+	// Get series metadata for TV shows (episode resolver + daily show detection)
 	var episodeResolver *filter.SeriesEpisodeResolver
+	var isDaily bool
+	var targetAirDate string
 	if mediaType == "series" && h.MetadataSvc != nil {
-		episodeResolver = h.createEpisodeResolver(r.Context(), query, year)
-		if episodeResolver != nil {
-			log.Printf("[indexer] Episode resolver created: %d total episodes, %d seasons",
-				episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
+		seriesMeta := h.getSeriesSearchMetadata(r.Context(), query, year)
+		if seriesMeta != nil {
+			episodeResolver = seriesMeta.EpisodeResolver
+			isDaily = seriesMeta.IsDaily
+			targetAirDate = seriesMeta.TargetAirDate
+			if episodeResolver != nil {
+				log.Printf("[indexer] Episode resolver created: %d total episodes, %d seasons",
+					episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
+			}
+			if isDaily {
+				log.Printf("[indexer] Daily show detected, targetAirDate=%s", targetAirDate)
+			}
 		}
 	}
 
@@ -82,6 +92,8 @@ func (h *IndexerHandler) Search(w http.ResponseWriter, r *http.Request) {
 		UserID:          userID,
 		ClientID:        clientID,
 		EpisodeResolver: episodeResolver,
+		IsDaily:         isDaily,
+		TargetAirDate:   targetAirDate,
 	}
 
 	results, err := h.Service.Search(r.Context(), opts)
@@ -170,14 +182,21 @@ func classifySearchError(err error) (int, map[string]interface{}) {
 	}
 }
 
-// createEpisodeResolver fetches series metadata and creates an episode resolver
-// for accurate pack size filtering
-func (h *IndexerHandler) createEpisodeResolver(ctx context.Context, query string, year int) *filter.SeriesEpisodeResolver {
+// seriesSearchMetadata contains series metadata needed for search
+type seriesSearchMetadata struct {
+	EpisodeResolver *filter.SeriesEpisodeResolver
+	IsDaily         bool
+	TargetAirDate   string // YYYY-MM-DD format for daily shows
+}
+
+// getSeriesSearchMetadata fetches series metadata for search, including episode resolver
+// and daily show detection
+func (h *IndexerHandler) getSeriesSearchMetadata(ctx context.Context, query string, year int) *seriesSearchMetadata {
 	if h.MetadataSvc == nil {
 		return nil
 	}
 
-	// Parse title from query (e.g., "ReBoot S03E02" -> "ReBoot")
+	// Parse title and episode from query (e.g., "ReBoot S03E02" -> "ReBoot", Season=3, Episode=2)
 	parsed := debrid.ParseQuery(query)
 	titleName := strings.TrimSpace(parsed.Title)
 	if titleName == "" {
@@ -196,16 +215,20 @@ func (h *IndexerHandler) createEpisodeResolver(ctx context.Context, query string
 	// Fetch series details from metadata service
 	details, err := h.MetadataSvc.SeriesDetails(ctx, metaQuery)
 	if err != nil {
-		log.Printf("[indexer] Failed to get series details for episode resolver: %v", err)
+		log.Printf("[indexer] Failed to get series details for search metadata: %v", err)
 		return nil
 	}
 
 	if details == nil || len(details.Seasons) == 0 {
-		log.Printf("[indexer] No season data available for episode resolver")
+		log.Printf("[indexer] No season data available for search metadata")
 		return nil
 	}
 
-	// Build season -> episode count map
+	result := &seriesSearchMetadata{
+		IsDaily: details.Title.IsDaily,
+	}
+
+	// Build season -> episode count map for episode resolver
 	seasonCounts := make(map[int]int)
 	for _, season := range details.Seasons {
 		// Skip specials (season 0) unless explicitly included
@@ -219,10 +242,37 @@ func (h *IndexerHandler) createEpisodeResolver(ctx context.Context, query string
 		}
 	}
 
-	if len(seasonCounts) == 0 {
-		log.Printf("[indexer] No valid seasons found for episode resolver")
-		return nil
+	if len(seasonCounts) > 0 {
+		result.EpisodeResolver = filter.NewSeriesEpisodeResolver(seasonCounts)
 	}
 
-	return filter.NewSeriesEpisodeResolver(seasonCounts)
+	// For daily shows, find the air date of the target episode
+	if result.IsDaily && parsed.Season > 0 && parsed.Episode > 0 {
+		log.Printf("[indexer] Series %q is a daily show, looking up air date for S%02dE%02d",
+			titleName, parsed.Season, parsed.Episode)
+		for _, season := range details.Seasons {
+			if season.Number == parsed.Season {
+				for _, ep := range season.Episodes {
+					if ep.EpisodeNumber == parsed.Episode && ep.AiredDate != "" {
+						result.TargetAirDate = ep.AiredDate
+						log.Printf("[indexer] Found air date %s for S%02dE%02d",
+							result.TargetAirDate, parsed.Season, parsed.Episode)
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+
+	return result
+}
+
+// createEpisodeResolver is a convenience wrapper for backward compatibility
+func (h *IndexerHandler) createEpisodeResolver(ctx context.Context, query string, year int) *filter.SeriesEpisodeResolver {
+	meta := h.getSeriesSearchMetadata(ctx, query, year)
+	if meta == nil {
+		return nil
+	}
+	return meta.EpisodeResolver
 }

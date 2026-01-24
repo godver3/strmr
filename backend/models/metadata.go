@@ -52,6 +52,7 @@ type Title struct {
 	Popularity      float64   `json:"popularity,omitempty"`
 	Network         string    `json:"network,omitempty"`
 	Status          string    `json:"status,omitempty"` // For series: Continuing, Ended, Upcoming, etc.
+	IsDaily         bool      `json:"isDaily,omitempty"` // True for daily shows (talk shows, news, etc.) that use date-based episode naming
 	PrimaryTrailer  *Trailer  `json:"primaryTrailer,omitempty"`
 	Trailers        []Trailer `json:"trailers,omitempty"`
 	Releases        []Release `json:"releases,omitempty"`

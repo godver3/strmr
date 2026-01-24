@@ -678,6 +678,14 @@ func buildSelectionHintsFromCandidate(candidate models.NZBResult, directory stri
 		if hints.TargetEpisodeCode == "" && hints.TargetSeason > 0 && hints.TargetEpisode > 0 {
 			hints.TargetEpisodeCode = fmt.Sprintf("S%02dE%02d", hints.TargetSeason, hints.TargetEpisode)
 		}
+		// Daily show detection
+		if isDaily := strings.TrimSpace(candidate.Attributes["isDaily"]); isDaily == "true" {
+			hints.IsDaily = true
+		}
+		// Air date for daily shows
+		if airDate := strings.TrimSpace(candidate.Attributes["targetAirDate"]); airDate != "" {
+			hints.TargetAirDate = airDate
+		}
 	}
 
 	return hints

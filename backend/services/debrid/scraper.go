@@ -8,11 +8,13 @@ import (
 
 // SearchRequest provides normalized inputs to scraper implementations.
 type SearchRequest struct {
-	Query      string
-	Categories []string
-	MaxResults int
-	Parsed     ParsedQuery
-	IMDBID     string // Optional IMDB ID (e.g., "tt11126994") to bypass search
+	Query         string
+	Categories    []string
+	MaxResults    int
+	Parsed        ParsedQuery
+	IMDBID        string // Optional IMDB ID (e.g., "tt11126994") to bypass search
+	IsDaily       bool   // True for daily shows (talk shows, news) that use date-based naming
+	TargetAirDate string // For daily shows: the target air date in YYYY-MM-DD format
 }
 
 // Scraper describes a pluggable source capable of returning torrent releases.

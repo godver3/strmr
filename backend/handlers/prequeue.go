@@ -376,10 +376,16 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 	log.Printf("[prequeue] Searching with query: %q", query)
 
 	// Create episode resolver for TV shows to enable accurate pack size filtering
-	// Also lookup absolute episode number if not provided (for anime matching)
+	// Also lookup absolute episode number and daily show info if not provided
 	var episodeResolver *filter.SeriesEpisodeResolver
+	var isDaily bool
+	var targetAirDate string
 	if mediaType == "series" && h.metadataSvc != nil {
-		episodeResolver, targetEpisode = h.createEpisodeResolverAndLookupAbsoluteEp(ctx, titleID, titleName, year, imdbID, targetEpisode)
+		seriesMeta := h.createEpisodeResolverAndLookupAbsoluteEp(ctx, titleID, titleName, year, imdbID, targetEpisode)
+		episodeResolver = seriesMeta.EpisodeResolver
+		targetEpisode = seriesMeta.TargetEpisode
+		isDaily = seriesMeta.IsDaily
+		targetAirDate = seriesMeta.TargetAirDate
 		if episodeResolver != nil {
 			log.Printf("[prequeue] Episode resolver created: %d total episodes, %d seasons", episodeResolver.TotalEpisodes, len(episodeResolver.SeasonEpisodeCounts))
 		}
@@ -399,6 +405,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 		UserID:          userID,
 		ClientID:        clientID,
 		EpisodeResolver: episodeResolver,
+		IsDaily:         isDaily,
+		TargetAirDate:   targetAirDate,
 	}
 	// Pass absolute episode number for anime matching (if available)
 	if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber > 0 {
@@ -1073,12 +1081,24 @@ func padNumber(n int) string {
 	return fmt.Sprintf("%02d", n)
 }
 
+// SeriesMetadataResult holds series-specific metadata needed for search and file matching
+type SeriesMetadataResult struct {
+	EpisodeResolver *filter.SeriesEpisodeResolver
+	TargetEpisode   *models.EpisodeReference
+	IsDaily         bool   // True for daily shows (talk shows, news) that use date-based naming
+	TargetAirDate   string // Air date from TVDB in YYYY-MM-DD format
+}
+
 // createEpisodeResolverAndLookupAbsoluteEp fetches series metadata, creates an episode resolver,
 // and looks up the absolute episode number for the target episode if not already set.
 // Returns the episode resolver and an updated targetEpisode (with AbsoluteEpisodeNumber set if found).
-func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.Context, titleID, titleName string, year int, imdbID string, targetEpisode *models.EpisodeReference) (*filter.SeriesEpisodeResolver, *models.EpisodeReference) {
+func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.Context, titleID, titleName string, year int, imdbID string, targetEpisode *models.EpisodeReference) *SeriesMetadataResult {
+	result := &SeriesMetadataResult{
+		TargetEpisode: targetEpisode,
+	}
+
 	if h.metadataSvc == nil {
-		return nil, targetEpisode
+		return result
 	}
 
 	// Build query using available identifiers
@@ -1092,17 +1112,29 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 	details, err := h.metadataSvc.SeriesDetails(ctx, query)
 	if err != nil {
 		log.Printf("[prequeue] Failed to get series details for episode resolver: %v", err)
-		return nil, targetEpisode
+		return result
 	}
 
-	if details == nil || len(details.Seasons) == 0 {
+	if details == nil {
+		log.Printf("[prequeue] No series details available")
+		return result
+	}
+
+	// Check if this is a daily show from the metadata
+	result.IsDaily = details.Title.IsDaily
+	if result.IsDaily {
+		log.Printf("[prequeue] Series %q is a daily show (talk show, news, etc.) - will use date-based matching", details.Title.Name)
+	}
+
+	if len(details.Seasons) == 0 {
 		log.Printf("[prequeue] No season data available for episode resolver")
-		return nil, targetEpisode
+		return result
 	}
 
-	// Build season -> episode count map AND lookup absolute episode number
+	// Build season -> episode count map AND lookup absolute episode number and air date
 	seasonCounts := make(map[int]int)
 	var foundAbsoluteEp int
+	var foundAirDate string
 	for _, season := range details.Seasons {
 		// Skip specials (season 0) unless explicitly included
 		if season.Number > 0 {
@@ -1114,14 +1146,22 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 			seasonCounts[season.Number] = count
 		}
 
-		// Look for the target episode's absolute number if not already set
-		if targetEpisode != nil && targetEpisode.AbsoluteEpisodeNumber == 0 &&
-			season.Number == targetEpisode.SeasonNumber {
+		// Look for the target episode's data if not already set
+		if targetEpisode != nil && season.Number == targetEpisode.SeasonNumber {
 			for _, ep := range season.Episodes {
-				if ep.EpisodeNumber == targetEpisode.EpisodeNumber && ep.AbsoluteEpisodeNumber > 0 {
-					foundAbsoluteEp = ep.AbsoluteEpisodeNumber
-					log.Printf("[prequeue] Found absolute episode number %d for S%02dE%02d from TVDB",
-						foundAbsoluteEp, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber)
+				if ep.EpisodeNumber == targetEpisode.EpisodeNumber {
+					// Get absolute episode number if not set
+					if targetEpisode.AbsoluteEpisodeNumber == 0 && ep.AbsoluteEpisodeNumber > 0 {
+						foundAbsoluteEp = ep.AbsoluteEpisodeNumber
+						log.Printf("[prequeue] Found absolute episode number %d for S%02dE%02d from TVDB",
+							foundAbsoluteEp, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber)
+					}
+					// Get air date for daily shows (AiredDate field in SeriesEpisode)
+					if ep.AiredDate != "" {
+						foundAirDate = ep.AiredDate
+						log.Printf("[prequeue] Found air date %s for S%02dE%02d from TVDB",
+							foundAirDate, targetEpisode.SeasonNumber, targetEpisode.EpisodeNumber)
+					}
 					break
 				}
 			}
@@ -1143,15 +1183,21 @@ func (h *PrequeueHandler) createEpisodeResolverAndLookupAbsoluteEp(ctx context.C
 			AirDate:               targetEpisode.AirDate,
 			WatchedAt:             targetEpisode.WatchedAt,
 		}
-		targetEpisode = updatedEpisode
+		result.TargetEpisode = updatedEpisode
+	}
+
+	// Set the air date for daily show matching
+	if foundAirDate != "" {
+		result.TargetAirDate = foundAirDate
 	}
 
 	if len(seasonCounts) == 0 {
 		log.Printf("[prequeue] No valid seasons found for episode resolver")
-		return nil, targetEpisode
+		return result
 	}
 
-	return filter.NewSeriesEpisodeResolver(seasonCounts), targetEpisode
+	result.EpisodeResolver = filter.NewSeriesEpisodeResolver(seasonCounts)
+	return result
 }
 
 // findAudioTrackByLanguage wraps the helper function for backward compatibility

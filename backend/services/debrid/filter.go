@@ -16,13 +16,15 @@ type FilterOptions struct {
 	HDRDVPolicy         filter.HDRDVPolicy // HDR/DV inclusion policy
 	PrioritizeHdr       bool               // Prioritize HDR/DV content in results
 	AlternateTitles     []string
-	FilterOutTerms      []string                     // Terms to filter out from results (case-insensitive match in title)
-	TotalSeriesEpisodes int                          // Deprecated: use EpisodeResolver instead
-	EpisodeResolver     filter.EpisodeCountResolver  // Resolver for accurate episode counts from metadata
+	FilterOutTerms      []string                    // Terms to filter out from results (case-insensitive match in title)
+	TotalSeriesEpisodes int                         // Deprecated: use EpisodeResolver instead
+	EpisodeResolver     filter.EpisodeCountResolver // Resolver for accurate episode counts from metadata
 	// Target episode filtering (for TV shows)
-	TargetSeason          int // Target season number (e.g., 22 for S22E68)
-	TargetEpisode         int // Target episode number within season (e.g., 68 for S22E68)
-	TargetAbsoluteEpisode int // Target absolute episode number for anime (e.g., 1153 for One Piece)
+	TargetSeason          int    // Target season number (e.g., 22 for S22E68)
+	TargetEpisode         int    // Target episode number within season (e.g., 68 for S22E68)
+	TargetAbsoluteEpisode int    // Target absolute episode number for anime (e.g., 1153 for One Piece)
+	IsDaily               bool   // True for daily shows (talk shows, news) - filter by date
+	TargetAirDate         string // For daily shows: air date in YYYY-MM-DD format
 }
 
 // FilterResults filters search results based on parsed title information
@@ -45,6 +47,8 @@ func FilterResults(results []models.NZBResult, opts FilterOptions) []models.NZBR
 		TargetSeason:          opts.TargetSeason,
 		TargetEpisode:         opts.TargetEpisode,
 		TargetAbsoluteEpisode: opts.TargetAbsoluteEpisode,
+		IsDaily:               opts.IsDaily,
+		TargetAirDate:         opts.TargetAirDate,
 	}
 	return filter.Results(results, filterOpts)
 }

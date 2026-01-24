@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/mediaresolve"
 	"novastream/models"
 )
 
@@ -159,43 +160,87 @@ func (t *TorrentioScraper) searchByIMDBID(ctx context.Context, req SearchRequest
 	)
 
 	for _, mediaType := range mediaCandidates {
-		streamID := imdbID
-		if mediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
-			streamID = fmt.Sprintf("%s:%d:%d", imdbID, req.Parsed.Season, req.Parsed.Episode)
+		// For daily shows, Torrentio uses TMDB episode numbering which often differs from TVDB.
+		// Strategy: Try episode N-1, N, N+1 (TMDB may have ±1 episode offset from TVDB).
+		// Stop as soon as we find results matching the target date.
+		episodesToSearch := []int{req.Parsed.Episode}
+		isDailySearch := req.IsDaily && mediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 && req.TargetAirDate != ""
+		if isDailySearch {
+			log.Printf("[torrentio] Daily show detected, will try E%d, E%d, E%d for target date %s",
+				req.Parsed.Episode-1, req.Parsed.Episode, req.Parsed.Episode+1, req.TargetAirDate)
+			// Try N-1, then N, then N+1
+			episodesToSearch = []int{}
+			if req.Parsed.Episode > 1 {
+				episodesToSearch = append(episodesToSearch, req.Parsed.Episode-1)
+			}
+			episodesToSearch = append(episodesToSearch, req.Parsed.Episode)
+			episodesToSearch = append(episodesToSearch, req.Parsed.Episode+1)
 		}
 
-		streams, err := t.fetchStreams(ctx, mediaType, streamID)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("torrentio %s %s: %w", mediaType, streamID, err))
-			continue
-		}
+		for _, episode := range episodesToSearch {
+			streamID := imdbID
+			if mediaType == MediaTypeSeries && req.Parsed.Season > 0 && episode > 0 {
+				streamID = fmt.Sprintf("%s:%d:%d", imdbID, req.Parsed.Season, episode)
+			}
 
-		for _, stream := range streams {
-			if stream.infoHash == "" {
+			streams, err := t.fetchStreams(ctx, mediaType, streamID)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("torrentio %s %s: %w", mediaType, streamID, err))
 				continue
 			}
-			guid := fmt.Sprintf("%s:%s:%d", t.Name(), strings.ToLower(stream.infoHash), stream.fileIdx)
-			if _, exists := seen[guid]; exists {
-				continue
+
+			var batchResults []ScrapeResult
+			foundCorrectDate := false
+
+			for _, stream := range streams {
+				if stream.infoHash == "" {
+					continue
+				}
+				guid := fmt.Sprintf("%s:%s:%d", t.Name(), strings.ToLower(stream.infoHash), stream.fileIdx)
+				if _, exists := seen[guid]; exists {
+					continue
+				}
+				seen[guid] = struct{}{}
+
+				result := ScrapeResult{
+					Title:       stream.titleText,
+					Indexer:     t.Name(),
+					Magnet:      buildMagnet(stream.infoHash, stream.trackers),
+					InfoHash:    stream.infoHash,
+					FileIndex:   stream.fileIdx,
+					SizeBytes:   stream.sizeBytes,
+					Seeders:     stream.seeders,
+					Provider:    stream.provider,
+					Languages:   stream.languages,
+					Resolution:  stream.resolution,
+					MetaName:    req.Parsed.Title,
+					MetaID:      imdbID,
+					Source:      t.Name(),
+					Attributes:  stream.attributes(),
+					ServiceType: models.ServiceTypeDebrid,
+				}
+
+				// For daily shows, check if this result matches the target date
+				if isDailySearch {
+					if mediaresolve.CandidateMatchesDailyDate(stream.titleText, req.TargetAirDate, 0) {
+						foundCorrectDate = true
+						batchResults = append(batchResults, result)
+					}
+					// Skip results that don't match the target date
+				} else {
+					batchResults = append(batchResults, result)
+				}
 			}
-			seen[guid] = struct{}{}
-			results = append(results, ScrapeResult{
-				Title:       stream.titleText,
-				Indexer:     t.Name(),
-				Magnet:      buildMagnet(stream.infoHash, stream.trackers),
-				InfoHash:    stream.infoHash,
-				FileIndex:   stream.fileIdx,
-				SizeBytes:   stream.sizeBytes,
-				Seeders:     stream.seeders,
-				Provider:    stream.provider,
-				Languages:   stream.languages,
-				Resolution:  stream.resolution,
-				MetaName:    req.Parsed.Title,
-				MetaID:      imdbID,
-				Source:      t.Name(),
-				Attributes:  stream.attributes(),
-				ServiceType: models.ServiceTypeDebrid,
-			})
+
+			results = append(results, batchResults...)
+
+			// For daily shows: if we found results with the correct date, stop searching
+			if isDailySearch && foundCorrectDate {
+				log.Printf("[torrentio] Found %d results matching target date %s at episode %d, stopping search",
+					len(batchResults), req.TargetAirDate, episode)
+				break
+			}
+
 			if req.MaxResults > 0 && len(results) >= req.MaxResults {
 				return results, nil
 			}

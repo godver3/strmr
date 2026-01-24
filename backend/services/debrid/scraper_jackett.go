@@ -84,13 +84,17 @@ func (j *JackettScraper) Search(ctx context.Context, req SearchRequest) ([]Scrap
 		return nil, nil
 	}
 
-	log.Printf("[jackett] Search called with Query=%q, ParsedTitle=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s",
-		req.Query, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.Parsed.Year, req.Parsed.MediaType)
+	log.Printf("[jackett] Search called with Query=%q, ParsedTitle=%q, Season=%d, Episode=%d, Year=%d, MediaType=%s, IsDaily=%v, TargetAirDate=%q",
+		req.Query, cleanTitle, req.Parsed.Season, req.Parsed.Episode, req.Parsed.Year, req.Parsed.MediaType, req.IsDaily, req.TargetAirDate)
 
 	var results []ScrapeResult
 	var err error
 
-	if req.Parsed.MediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
+	if req.IsDaily && req.TargetAirDate != "" {
+		// Daily show search: use date-based query instead of S##E## format
+		// Scene releases use format: "Title.2026.01.21.Guest.mkv"
+		results, err = j.searchDailyTV(ctx, cleanTitle, req.TargetAirDate)
+	} else if req.Parsed.MediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
 		// TV show search: title + SxxExx
 		results, err = j.searchTV(ctx, cleanTitle, req.Parsed.Season, req.Parsed.Episode)
 	} else if req.Parsed.MediaType == MediaTypeMovie || req.Parsed.Year > 0 {
@@ -146,6 +150,33 @@ func (j *JackettScraper) searchTV(ctx context.Context, title string, season, epi
 	params.Set("ep", strconv.Itoa(episode))
 
 	log.Printf("[jackett] TV search: q=%q, season=%d, ep=%d", title, season, episode)
+	return j.fetchResults(ctx, params)
+}
+
+// searchDailyTV performs a date-based search for daily shows (talk shows, news, etc.)
+// Uses generic text search with date format since scene releases use "Title.YYYY.MM.DD" naming.
+func (j *JackettScraper) searchDailyTV(ctx context.Context, title string, airDate string) ([]ScrapeResult, error) {
+	// Parse the air date (YYYY-MM-DD format)
+	dateParts := strings.Split(airDate, "-")
+	if len(dateParts) != 3 {
+		log.Printf("[jackett] Invalid air date format %q, falling back to generic search", airDate)
+		return j.searchGeneric(ctx, title)
+	}
+
+	year := dateParts[0]
+	month := dateParts[1]
+	day := dateParts[2]
+
+	// Scene releases use format: "Title.YYYY.MM.DD" (dot-separated)
+	// Search with dot-separated date format
+	query := fmt.Sprintf("%s %s.%s.%s", title, year, month, day)
+
+	params := url.Values{}
+	params.Set("apikey", j.apiKey)
+	params.Set("t", "search") // Use generic search, not tvsearch
+	params.Set("q", query)
+
+	log.Printf("[jackett] Daily TV search: q=%q (airDate=%s)", query, airDate)
 	return j.fetchResults(ctx, params)
 }
 

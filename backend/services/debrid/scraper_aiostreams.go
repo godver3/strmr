@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"novastream/internal/mediaresolve"
 	"novastream/models"
 )
 
@@ -64,8 +65,8 @@ func (a *AIOStreamsScraper) Search(ctx context.Context, req SearchRequest) ([]Sc
 		imdbID = "tt" + imdbID
 	}
 
-	log.Printf("[aiostreams] Search called with IMDBID=%q, Season=%d, Episode=%d, MediaType=%s",
-		imdbID, req.Parsed.Season, req.Parsed.Episode, req.Parsed.MediaType)
+	log.Printf("[aiostreams] Search called with IMDBID=%q, Season=%d, Episode=%d, MediaType=%s, IsDaily=%v, TargetAirDate=%q",
+		imdbID, req.Parsed.Season, req.Parsed.Episode, req.Parsed.MediaType, req.IsDaily, req.TargetAirDate)
 
 	// Determine media type candidates
 	mediaCandidates := determineMediaCandidates(req.Parsed.MediaType)
@@ -77,54 +78,94 @@ func (a *AIOStreamsScraper) Search(ctx context.Context, req SearchRequest) ([]Sc
 	)
 
 	for _, mediaType := range mediaCandidates {
-		streamID := imdbID
 		stremioType := "movie"
 		if mediaType == MediaTypeSeries {
 			stremioType = "series"
-			if req.Parsed.Season > 0 && req.Parsed.Episode > 0 {
-				streamID = fmt.Sprintf("%s:%d:%d", imdbID, req.Parsed.Season, req.Parsed.Episode)
-			}
 		}
 
-		streams, err := a.fetchStreams(ctx, stremioType, streamID)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("aiostreams %s %s: %w", stremioType, streamID, err))
-			continue
+		// For daily shows, search adjacent episodes (N-1, N, N+1) to handle TMDB/TVDB offset
+		episodesToSearch := []int{req.Parsed.Episode}
+		isDailySearch := req.IsDaily && mediaType == MediaTypeSeries && req.Parsed.Season > 0 && req.Parsed.Episode > 0 && req.TargetAirDate != ""
+		if isDailySearch {
+			log.Printf("[aiostreams] Daily show detected, will try E%d, E%d, E%d for target date %s",
+				req.Parsed.Episode-1, req.Parsed.Episode, req.Parsed.Episode+1, req.TargetAirDate)
+			episodesToSearch = []int{}
+			if req.Parsed.Episode > 1 {
+				episodesToSearch = append(episodesToSearch, req.Parsed.Episode-1)
+			}
+			episodesToSearch = append(episodesToSearch, req.Parsed.Episode)
+			episodesToSearch = append(episodesToSearch, req.Parsed.Episode+1)
 		}
 
-		for _, stream := range streams {
-			if stream.url == "" {
-				continue
-			}
-			// Use URL as unique identifier since there's no infohash
-			guid := fmt.Sprintf("%s:%s", a.Name(), stream.url)
-			if _, exists := seen[guid]; exists {
-				continue
-			}
-			seen[guid] = struct{}{}
-
-			attrs := stream.attributes()
-			if a.passthroughFormat {
-				attrs["passthrough_format"] = "true"
+		for _, episode := range episodesToSearch {
+			streamID := imdbID
+			if mediaType == MediaTypeSeries && req.Parsed.Season > 0 && episode > 0 {
+				streamID = fmt.Sprintf("%s:%d:%d", imdbID, req.Parsed.Season, episode)
 			}
 
-			results = append(results, ScrapeResult{
-				Title:       stream.filename,
-				Indexer:     a.Name(),
-				TorrentURL:  stream.url, // Use TorrentURL field to store the direct stream URL
-				InfoHash:    "",         // No infohash - these are pre-resolved streams
-				FileIndex:   0,
-				SizeBytes:   stream.sizeBytes,
-				Seeders:     0, // Not applicable for pre-resolved streams
-				Provider:    stream.provider,
-				Languages:   stream.languages,
-				Resolution:  stream.resolution,
-				MetaName:    stream.title,
-				MetaID:      imdbID,
-				Source:      a.Name(),
-				Attributes:  attrs,
-				ServiceType: models.ServiceTypeDebrid,
-			})
+			streams, err := a.fetchStreams(ctx, stremioType, streamID)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("aiostreams %s %s: %w", stremioType, streamID, err))
+				continue
+			}
+
+			var batchResults []ScrapeResult
+			foundCorrectDate := false
+
+			for _, stream := range streams {
+				if stream.url == "" {
+					continue
+				}
+				// Use URL as unique identifier since there's no infohash
+				guid := fmt.Sprintf("%s:%s", a.Name(), stream.url)
+				if _, exists := seen[guid]; exists {
+					continue
+				}
+				seen[guid] = struct{}{}
+
+				attrs := stream.attributes()
+				if a.passthroughFormat {
+					attrs["passthrough_format"] = "true"
+				}
+
+				result := ScrapeResult{
+					Title:       stream.filename,
+					Indexer:     a.Name(),
+					TorrentURL:  stream.url, // Use TorrentURL field to store the direct stream URL
+					InfoHash:    "",         // No infohash - these are pre-resolved streams
+					FileIndex:   0,
+					SizeBytes:   stream.sizeBytes,
+					Seeders:     0, // Not applicable for pre-resolved streams
+					Provider:    stream.provider,
+					Languages:   stream.languages,
+					Resolution:  stream.resolution,
+					MetaName:    stream.title,
+					MetaID:      imdbID,
+					Source:      a.Name(),
+					Attributes:  attrs,
+					ServiceType: models.ServiceTypeDebrid,
+				}
+
+				// For daily shows, check if this result matches the target date
+				if isDailySearch {
+					if mediaresolve.CandidateMatchesDailyDate(stream.filename, req.TargetAirDate, 0) {
+						foundCorrectDate = true
+						batchResults = append(batchResults, result)
+					}
+					// Skip results that don't match the target date
+				} else {
+					batchResults = append(batchResults, result)
+				}
+			}
+
+			results = append(results, batchResults...)
+
+			// For daily shows: if we found results with the correct date, stop searching
+			if isDailySearch && foundCorrectDate {
+				log.Printf("[aiostreams] Found %d results matching target date %s at episode %d, stopping search",
+					len(batchResults), req.TargetAirDate, episode)
+				break
+			}
 
 			if req.MaxResults > 0 && len(results) >= req.MaxResults {
 				return results, nil

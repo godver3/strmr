@@ -22,7 +22,9 @@ type SelectionHints struct {
 	TargetSeason          int
 	TargetEpisode         int
 	TargetEpisodeCode     string
-	AbsoluteEpisodeNumber int // For anime: the absolute episode number (e.g., 1153 for One Piece)
+	AbsoluteEpisodeNumber int    // For anime: the absolute episode number (e.g., 1153 for One Piece)
+	TargetAirDate         string // For daily shows: the air date in YYYY-MM-DD format
+	IsDaily               bool   // True if this is a daily show (talk shows, news, etc.)
 }
 
 // EpisodeCode captures a parsed SXXEXX code.
@@ -76,6 +78,10 @@ var (
 	resolutionPattern = regexp.MustCompile(`(?i)(\d{3,4})p`)         // 1080p, 720p, 480p
 	yearPattern       = regexp.MustCompile(`[\(\[](\d{4})[\)\]]`)    // (2024), [2024]
 	checksumPattern   = regexp.MustCompile(`[\[\(]([A-Fa-f0-9]{8})[\]\)]`) // [ABCD1234]
+
+	// Daily show date patterns
+	// Matches: "2026.01.21", "2026-01-21", "2026 01 21"
+	dailyDatePattern = regexp.MustCompile(`(?:^|[.\-_\s])(\d{4})[.\-\s](\d{2})[.\-\s](\d{2})(?:[.\-_\s]|$)`)
 )
 
 // SelectBestCandidate applies SXXEXX matching and fuzzy title similarity against a list of candidates.
@@ -184,10 +190,51 @@ func SelectBestCandidate(candidates []Candidate, hints SelectionHints) (int, str
 			}
 		}
 
-		// CRITICAL: If we have a target episode but NO candidates matched (including absolute), reject this result.
+		// If no matches found yet, try date-based matching for daily shows
+		// Daily shows (talk shows, news) use date format: "Show.Name.2026.01.21.Guest.Name.mkv"
+		// IMPORTANT: Use exact date match only - no tolerance. For daily shows, adjacent dates
+		// are different episodes, so ±1 day tolerance would match the WRONG episode.
+		if len(matching) == 0 && hints.IsDaily && hints.TargetAirDate != "" {
+			fmt.Printf("[selector] No S%02dE%02d matches, trying daily date %s (exact match only)\n", targetEpisode.Season, targetEpisode.Episode, hints.TargetAirDate)
+
+			var dateMatching []int
+			for idx, cand := range candidates {
+				matches := CandidateMatchesDailyDate(cand.Label, hints.TargetAirDate, 0) // Exact match only
+				fmt.Printf("[selector]   Candidate[%d]: %q - exactDateMatch=%v\n", idx, cand.Label, matches)
+				if matches {
+					dateMatching = append(dateMatching, idx)
+				}
+			}
+
+			fmt.Printf("[selector] Found %d matching candidates for daily date %s\n", len(dateMatching), hints.TargetAirDate)
+
+			if len(dateMatching) == 1 {
+				return dateMatching[0], fmt.Sprintf("matched daily date %s", hints.TargetAirDate)
+			}
+			if len(dateMatching) > 1 {
+				if len(releaseTokens) > 0 {
+					if idx, score := pickCandidateBySimilarity(candidates, dateMatching, releaseTokens, releaseFlat); idx != -1 {
+						return idx, fmt.Sprintf("daily date match + title similarity score %d", score)
+					}
+				}
+				if idx := pickBestPriorityIndex(candidates, dateMatching); idx != -1 {
+					return idx, fmt.Sprintf("daily date match fallback to extension priority (%s)", hints.TargetAirDate)
+				}
+			}
+			// If date matching found candidates, don't reject
+			if len(dateMatching) > 0 {
+				matching = dateMatching
+			}
+		}
+
+		// CRITICAL: If we have a target episode but NO candidates matched (including absolute and daily date), reject this result.
 		// This prevents falling back to title similarity which would select the wrong episode
 		// (e.g., selecting S01E01 when we need S01E05 but the season pack only has eps 1-2).
 		if len(matching) == 0 {
+			if hints.IsDaily && hints.TargetAirDate != "" {
+				fmt.Printf("[selector] No candidates match target episode S%02dE%02d or daily date %s - rejecting result\n", targetEpisode.Season, targetEpisode.Episode, hints.TargetAirDate)
+				return -1, fmt.Sprintf("no file matches target episode S%02dE%02d or date %s", targetEpisode.Season, targetEpisode.Episode, hints.TargetAirDate)
+			}
 			if hints.AbsoluteEpisodeNumber > 0 {
 				fmt.Printf("[selector] No candidates match target episode S%02dE%02d or absolute %d - rejecting result\n", targetEpisode.Season, targetEpisode.Episode, hints.AbsoluteEpisodeNumber)
 				return -1, fmt.Sprintf("no file matches target episode S%02dE%02d (abs: %d)", targetEpisode.Season, targetEpisode.Episode, hints.AbsoluteEpisodeNumber)
@@ -500,4 +547,97 @@ func CandidateMatchesAbsoluteEpisode(candidateLabel string, targetAbsoluteEpisod
 	}
 
 	return parsedEpisode == targetAbsoluteEpisode
+}
+
+// ParseDailyDate extracts a date from a filename in YYYY.MM.DD, YYYY-MM-DD, or YYYY MM DD format.
+// Returns the year, month, day and true if found, or 0, 0, 0 and false otherwise.
+// This is used for daily shows (talk shows, news) that use date-based episode naming.
+func ParseDailyDate(value string) (year, month, day int, ok bool) {
+	if strings.TrimSpace(value) == "" {
+		return 0, 0, 0, false
+	}
+
+	matches := dailyDatePattern.FindStringSubmatch(value)
+	if len(matches) != 4 {
+		return 0, 0, 0, false
+	}
+
+	year, err := strconv.Atoi(matches[1])
+	if err != nil || year < 1900 || year > 2100 {
+		return 0, 0, 0, false
+	}
+
+	month, err = strconv.Atoi(matches[2])
+	if err != nil || month < 1 || month > 12 {
+		return 0, 0, 0, false
+	}
+
+	day, err = strconv.Atoi(matches[3])
+	if err != nil || day < 1 || day > 31 {
+		return 0, 0, 0, false
+	}
+
+	return year, month, day, true
+}
+
+// DatesMatchWithTolerance checks if two dates (in YYYY-MM-DD format) are within the specified tolerance.
+// Returns true if the dates are within toleranceDays of each other.
+// This handles the common case where scene releases use the taping date (Jan 21)
+// while TVDB uses the broadcast date (Jan 22).
+func DatesMatchWithTolerance(fileDate, targetDate string, toleranceDays int) bool {
+	if fileDate == "" || targetDate == "" {
+		return false
+	}
+
+	// Parse file date
+	fileParts := strings.Split(fileDate, "-")
+	if len(fileParts) != 3 {
+		return false
+	}
+	fileYear, err1 := strconv.Atoi(fileParts[0])
+	fileMonth, err2 := strconv.Atoi(fileParts[1])
+	fileDay, err3 := strconv.Atoi(fileParts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return false
+	}
+
+	// Parse target date
+	targetParts := strings.Split(targetDate, "-")
+	if len(targetParts) != 3 {
+		return false
+	}
+	targetYear, err1 := strconv.Atoi(targetParts[0])
+	targetMonth, err2 := strconv.Atoi(targetParts[1])
+	targetDay, err3 := strconv.Atoi(targetParts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return false
+	}
+
+	// Calculate difference in days (simplified - assumes same month/year for common case)
+	// For exact tolerance, we convert to day-of-year
+	fileDOY := fileYear*365 + fileMonth*31 + fileDay
+	targetDOY := targetYear*365 + targetMonth*31 + targetDay
+
+	diff := fileDOY - targetDOY
+	if diff < 0 {
+		diff = -diff
+	}
+
+	return diff <= toleranceDays
+}
+
+// CandidateMatchesDailyDate checks if the candidate label contains a date that matches
+// the target air date within the specified tolerance (typically ±1 day for daily shows).
+func CandidateMatchesDailyDate(candidateLabel, targetAirDate string, toleranceDays int) bool {
+	if targetAirDate == "" {
+		return false
+	}
+
+	year, month, day, ok := ParseDailyDate(candidateLabel)
+	if !ok {
+		return false
+	}
+
+	fileDate := fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+	return DatesMatchWithTolerance(fileDate, targetAirDate, toleranceDays)
 }
