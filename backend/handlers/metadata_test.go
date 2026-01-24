@@ -124,6 +124,14 @@ func (f *fakeMetadataService) ServePrequeuedTrailer(_ string, _ http.ResponseWri
 	return nil
 }
 
+func (f *fakeMetadataService) PersonDetails(_ context.Context, _ int64) (*models.PersonDetails, error) {
+	return nil, nil
+}
+
+func (f *fakeMetadataService) Similar(_ context.Context, _ string, _ int64) ([]models.Title, error) {
+	return nil, nil
+}
+
 func testConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
 	tmpDir := t.TempDir()
