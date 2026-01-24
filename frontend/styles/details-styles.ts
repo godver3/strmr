@@ -107,6 +107,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       paddingHorizontal: theme.spacing.lg,
       paddingVertical: theme.spacing.md,
       borderRadius: theme.radius.md,
+      overflow: 'visible',
     },
     bottomContent: {
       ...(Platform.isTV ? { flex: 0, marginTop: tvScale * 16 } : null),
@@ -120,6 +121,7 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       alignItems: 'center',
       gap: theme.spacing.md,
       marginBottom: theme.spacing.lg,
+      overflow: 'visible',
       ...(isTV ? { maxWidth: '70%', marginLeft: tvScale * 48 } : null),
     },
     title: {
@@ -182,12 +184,12 @@ export const createDetailsStyles = (theme: NovaTheme) => {
         : null),
     },
     genreBadge: {
-      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+      backgroundColor: 'rgba(255, 255, 255, 0.08)',
       paddingHorizontal: Math.round(12 * tvTextScale),
       paddingVertical: Math.round(6 * tvTextScale),
       borderRadius: Math.round(16 * tvScale),
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(255, 255, 255, 0.2)',
+      borderColor: 'rgba(255, 255, 255, 0.15)',
     },
     genreText: {
       fontSize: Math.round(12 * tvTextScale),
@@ -330,6 +332,60 @@ export const createDetailsStyles = (theme: NovaTheme) => {
       marginTop: theme.spacing.sm,
       color: theme.colors.status.danger,
       ...theme.typography.body.sm,
+    },
+    // Prequeue stream info display
+    prequeueInfoContainer: {
+      marginTop: theme.spacing.md,
+      marginLeft: isTV ? tvScale * 48 : 0,
+      marginBottom: isTV ? tvScale * 24 : 0,
+    },
+    prequeueFilename: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.primary,
+      marginBottom: theme.spacing.xs,
+      ...(isTV ? { fontSize: tvScale * 18 } : null),
+    },
+    prequeueTrackRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: isTV ? theme.spacing.sm : theme.spacing.xs,
+      gap: isTV ? theme.spacing.md : theme.spacing.sm,
+    },
+    prequeueTrackLabel: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      fontWeight: '600',
+      ...(isTV ? { fontSize: tvScale * 15 } : null),
+    },
+    prequeueTrackValue: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.primary,
+      ...(isTV ? { fontSize: tvScale * 15 } : null),
+    },
+    prequeueTrackBadge: {
+      ...theme.typography.caption.sm,
+      fontSize: isTV ? tvScale * 15 : 10,
+      fontWeight: '700',
+      color: '#fff',
+      paddingHorizontal: isTV ? theme.spacing.sm : theme.spacing.xs,
+      paddingVertical: isTV ? 4 : 2,
+      borderRadius: theme.radius.sm,
+      overflow: 'hidden',
+    },
+    prequeueTrackCodecBadge: {
+      backgroundColor: '#444',
+    },
+    prequeueTrackForcedBadge: {
+      backgroundColor: '#e67e22',
+    },
+    prequeueTrackSDHBadge: {
+      backgroundColor: '#27ae60',
+    },
+    prequeueLoadingText: {
+      ...theme.typography.caption.sm,
+      color: theme.colors.text.secondary,
+      fontStyle: 'italic',
+      ...(isTV ? { fontSize: tvScale * 15 } : null),
     },
     episodeNavigationRow: {
       flexDirection: 'row',

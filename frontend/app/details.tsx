@@ -28,6 +28,7 @@ try {
 }
 import {
   apiService,
+  type AudioTrackInfo,
   type CastMember,
   type ContentPreference,
   type EpisodeWatchPayload,
@@ -37,6 +38,7 @@ import {
   type SeriesDetails,
   type SeriesEpisode,
   type SeriesSeason,
+  type SubtitleTrackInfo,
   type Title,
   type Trailer,
   type TrailerPrequeueStatus,
@@ -62,6 +64,7 @@ import Animated, {
   useAnimatedScrollHandler,
   useSharedValue,
   withTiming,
+  withRepeat,
   Easing,
   cancelAnimation,
 } from 'react-native-reanimated';
@@ -184,6 +187,42 @@ const formatRating = (rating: Rating): string => {
       }
       return `${Math.round(rating.value)}%`;
   }
+};
+
+// Format language code to display name
+const formatLanguage = (lang: string | undefined): string => {
+  if (!lang) return 'Unknown';
+  const langMap: Record<string, string> = {
+    eng: 'English',
+    en: 'English',
+    jpn: 'Japanese',
+    ja: 'Japanese',
+    spa: 'Spanish',
+    es: 'Spanish',
+    fre: 'French',
+    fra: 'French',
+    fr: 'French',
+    ger: 'German',
+    deu: 'German',
+    de: 'German',
+    ita: 'Italian',
+    it: 'Italian',
+    por: 'Portuguese',
+    pt: 'Portuguese',
+    rus: 'Russian',
+    ru: 'Russian',
+    chi: 'Chinese',
+    zho: 'Chinese',
+    zh: 'Chinese',
+    kor: 'Korean',
+    ko: 'Korean',
+    ara: 'Arabic',
+    ar: 'Arabic',
+    hin: 'Hindi',
+    hi: 'Hindi',
+    und: 'Unknown',
+  };
+  return langMap[lang.toLowerCase()] || lang.toUpperCase();
 };
 
 // Rating badge component with image fallback (no labels - icons are self-explanatory)
@@ -386,33 +425,89 @@ export default function DetailsScreen() {
       .catch(() => setIsPosterPreloaded(true)); // Still show page on error
   }, [posterToPreload]);
 
-  // Calculate logo style to fit within bounding box while preserving aspect ratio
+  // Calculate logo style to maintain constant area across different aspect ratios
+  // All logos will have the same width * height regardless of their shape
   const logoStyle = useMemo(() => {
     if (!logoDimensions) return styles.titleLogo;
 
     const { width: imgWidth, height: imgHeight } = logoDimensions;
     const aspectRatio = imgWidth / imgHeight;
 
-    // Bounding box constraints
+    // Fixed target area in square pixels - all logos will have this exact area
+    // TV: 1.8x larger than original, Mobile: reduced by 30% from original
+    const baseTargetArea = isTV ? (tvScale * 120) * (tvScale * 120) * 3.4 : 80 * 80 * 2.1;
+
+    // Perceptual boost for squarish logos - wide logos look bigger than their area suggests
+    // Boost area for logos with aspect ratio below reference so they have similar visual presence
+    const referenceAspectRatio = 5;
+    const perceptualBoost = aspectRatio < referenceAspectRatio
+      ? Math.pow(referenceAspectRatio / aspectRatio, 0.25)
+      : 1;
+    const targetArea = baseTargetArea * perceptualBoost;
+
+    // Calculate dimensions that give targetArea while preserving aspect ratio
+    // area = width * height, aspectRatio = width / height
+    // Solving: width = sqrt(area * aspectRatio), height = sqrt(area / aspectRatio)
+    let finalWidth = Math.sqrt(targetArea * aspectRatio);
+    let finalHeight = Math.sqrt(targetArea / aspectRatio);
+
+    const preScaleWidth = finalWidth;
+    const preScaleHeight = finalHeight;
+    const preScaleArea = finalWidth * finalHeight;
+    let wasScaled = false;
+    let scaleApplied = 1;
+
+    // Bounding box constraints - scale down if needed to fit on screen
+    // maxHeight needs to be generous enough for square-ish logos to achieve target area
+    // TV: 1.8x larger to match the 1.8x logo size increase
     const maxWidth = windowWidth * (isTV ? 0.3 : 0.8);
-    const maxHeight = isTV ? tvScale * 120 : 80;
+    const maxHeight = isTV ? tvScale * 216 : 120;
 
-    // Calculate dimensions to fit within bounding box
-    let finalWidth = maxWidth;
-    let finalHeight = finalWidth / aspectRatio;
-
-    // If too tall, constrain by height instead
-    if (finalHeight > maxHeight) {
-      finalHeight = maxHeight;
-      finalWidth = finalHeight * aspectRatio;
+    if (finalWidth > maxWidth || finalHeight > maxHeight) {
+      const scaleX = finalWidth > maxWidth ? maxWidth / finalWidth : 1;
+      const scaleY = finalHeight > maxHeight ? maxHeight / finalHeight : 1;
+      scaleApplied = Math.min(scaleX, scaleY);
+      finalWidth *= scaleApplied;
+      finalHeight *= scaleApplied;
+      wasScaled = true;
     }
+
+    const finalArea = finalWidth * finalHeight;
+
+    console.log('[LOGO DEBUG]', {
+      imgDimensions: { width: imgWidth, height: imgHeight },
+      aspectRatio: aspectRatio.toFixed(2),
+      perceptualBoost: perceptualBoost.toFixed(2),
+      targetArea: Math.round(targetArea),
+      preScale: {
+        width: Math.round(preScaleWidth),
+        height: Math.round(preScaleHeight),
+        area: Math.round(preScaleArea),
+      },
+      bounds: { maxWidth: Math.round(maxWidth), maxHeight: Math.round(maxHeight) },
+      wasScaled,
+      scaleApplied: scaleApplied.toFixed(3),
+      final: {
+        width: Math.round(finalWidth),
+        height: Math.round(finalHeight),
+        area: Math.round(finalArea),
+      },
+    });
 
     return {
       width: finalWidth,
       height: finalHeight,
-      alignSelf: 'flex-start' as const,
     };
   }, [logoDimensions, windowWidth, isTV, tvScale, styles.titleLogo]);
+
+  // Shadow style for logo wrapper - applied to View, not Image, to avoid clipping
+  const logoGlowStyle = {
+    shadowColor: 'rgba(255, 255, 255, 0.2)',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
+    elevation: 2,
+  };
 
   // Compute final description/overview, preferring params but falling back to fetched metadata
   const displayDescription = useMemo(() => {
@@ -876,6 +971,7 @@ export default function DetailsScreen() {
   // Prequeue state for pre-loading playback
   const [prequeueId, setPrequeueId] = useState<string | null>(null);
   const [prequeueReady, setPrequeueReady] = useState(false);
+  const [prequeueDisplayInfo, setPrequeueDisplayInfo] = useState<PrequeueStatusResponse | null>(null);
   const [prequeueTargetEpisode, setPrequeueTargetEpisode] = useState<{
     seasonNumber: number;
     episodeNumber: number;
@@ -888,6 +984,32 @@ export default function DetailsScreen() {
   } | null> | null>(null);
   // Cache prequeue status from navigation (player already resolved it)
   const navigationPrequeueStatusRef = useRef<PrequeueStatusResponse | null>(null);
+
+  // Pulse animation for prequeue loading state
+  const prequeuePulseOpacity = useSharedValue(1);
+  const prequeuePulseStyle = useAnimatedStyle(() => {
+    return {
+      opacity: prequeuePulseOpacity.value,
+    };
+  });
+
+  // Start/stop pulse animation based on prequeue status
+  useEffect(() => {
+    const isLoading = prequeueDisplayInfo && !prequeueReady && prequeueDisplayInfo.status !== 'failed';
+    if (isLoading) {
+      // Start pulsing - animate between 0.4 and 1
+      prequeuePulseOpacity.value = 0.4;
+      prequeuePulseOpacity.value = withRepeat(
+        withTiming(1, { duration: 600, easing: Easing.inOut(Easing.ease) }),
+        -1,
+        true
+      );
+    } else {
+      // Stop pulsing, set to full opacity
+      cancelAnimation(prequeuePulseOpacity);
+      prequeuePulseOpacity.value = 1;
+    }
+  }, [prequeueDisplayInfo?.status, prequeueReady]);
 
   // Debug: Track resume modal visibility changes
   useEffect(() => {
@@ -1182,6 +1304,7 @@ export default function DetailsScreen() {
   useEffect(() => {
     if (!prequeueId) {
       setPrequeueReady(false);
+      setPrequeueDisplayInfo(null);
       return;
     }
 
@@ -1192,6 +1315,9 @@ export default function DetailsScreen() {
       try {
         const response = await apiService.getPrequeueStatus(prequeueId);
         if (cancelled) return;
+
+        // Always update display info to show current status
+        setPrequeueDisplayInfo(response);
 
         if (response.status === 'ready') {
           console.log('[prequeue] Prequeue is ready:', prequeueId);
@@ -1208,6 +1334,7 @@ export default function DetailsScreen() {
         if (!cancelled) {
           console.log('[prequeue] Status poll failed:', error);
           setPrequeueReady(false);
+          setPrequeueDisplayInfo(null);
         }
       }
     };
@@ -4199,13 +4326,15 @@ export default function DetailsScreen() {
               }
             : undefined
         }>
-        <View style={styles.titleRow}>
+        <View style={[styles.titleRow, { overflow: 'visible' }]}>
           {logoUrl && logoDimensions ? (
-            <RNImage
-              source={{ uri: logoUrl }}
-              style={logoStyle}
-              resizeMode="contain"
-            />
+            <View style={[{ padding: 12, marginLeft: -12, overflow: 'visible' }, logoGlowStyle]}>
+              <RNImage
+                source={{ uri: logoUrl }}
+                style={logoStyle}
+                resizeMode="contain"
+              />
+            </View>
           ) : (
             <Text style={styles.title}>{title}</Text>
           )}
@@ -4631,6 +4760,106 @@ export default function DetailsScreen() {
           </SpatialNavigationNode>
           {watchlistError && <Text style={styles.watchlistError}>{watchlistError}</Text>}
           {trailersError && <Text style={styles.trailerError}>{trailersError}</Text>}
+          {/* Prequeue stream info display */}
+          {prequeueDisplayInfo && (
+            <Animated.View style={[styles.prequeueInfoContainer, prequeuePulseStyle]}>
+              {/* Status message for early stages */}
+              {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
+                <Text style={styles.prequeueFilename}>
+                  {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
+                  {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
+                </Text>
+              )}
+              {/* Failed status */}
+              {prequeueDisplayInfo.status === 'failed' && (
+                <Text style={styles.prequeueFilename}>
+                  Failed: {prequeueDisplayInfo.error || 'Unknown error'}
+                </Text>
+              )}
+              {/* Show filename once available (resolving, probing, or ready) */}
+              {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
+                <>
+                  <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
+                    {prequeueDisplayInfo.displayName ||
+                      prequeueDisplayInfo.passthroughName ||
+                      (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
+                      (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+                  </Text>
+                  {/* Show loading state for tracks during probing */}
+                  {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
+                   !prequeueDisplayInfo.audioTracks?.length && (
+                    <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
+                  )}
+                  {/* Audio track - show once tracks are available */}
+                  {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
+                    <View style={styles.prequeueTrackRow}>
+                      <Text style={styles.prequeueTrackLabel}>Audio:</Text>
+                      <Text style={styles.prequeueTrackValue}>
+                        {(() => {
+                          const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                          const track = selectedIdx !== undefined && selectedIdx >= 0
+                            ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                            : prequeueDisplayInfo.audioTracks?.[0];
+                          if (!track) return 'Default';
+                          return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                        })()}
+                      </Text>
+                      {(() => {
+                        const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                        const track = selectedIdx !== undefined && selectedIdx >= 0
+                          ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                          : prequeueDisplayInfo.audioTracks?.[0];
+                        if (track?.codec) {
+                          return (
+                            <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                              {track.codec.toUpperCase()}
+                            </Text>
+                          );
+                        }
+                        return null;
+                      })()}
+                    </View>
+                  )}
+                  {/* Subtitle track - show once tracks are available */}
+                  {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                    <View style={styles.prequeueTrackRow}>
+                      <Text style={styles.prequeueTrackLabel}>Subtitles:</Text>
+                      <Text style={styles.prequeueTrackValue}>
+                        {(() => {
+                          const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                          if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                          const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                          if (!track) return 'Off';
+                          return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                        })()}
+                      </Text>
+                      {(() => {
+                        const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                        if (selectedIdx === undefined || selectedIdx < 0) return null;
+                        const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                        if (!track) return null;
+                        if (track.forced) {
+                          return (
+                            <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
+                              FORCED
+                            </Text>
+                          );
+                        }
+                        if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
+                          return (
+                            <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
+                              SDH
+                            </Text>
+                          );
+                        }
+                        return null;
+                      })()}
+                    </View>
+                  )}
+                </>
+              )}
+            </Animated.View>
+          )}
           {/* TV Episode Carousel - always render wrapper node for series to maintain navigation order
               (nodes register in DOM order, so late-loading content would otherwise end up at the end) */}
           {Platform.isTV && isSeries && (
@@ -4784,14 +5013,16 @@ export default function DetailsScreen() {
   const renderMobileContent = () => (
     <MobileParallaxContainer posterUrl={posterUrl} backdropUrl={backdropUrl} theme={theme}>
       {/* Title and metadata section */}
-      <View style={styles.topContent}>
-        <View style={styles.titleRow}>
+      <View style={[styles.topContent, { overflow: 'visible' }]}>
+        <View style={[styles.titleRow, { overflow: 'visible', marginLeft: -12 }]}>
           {logoUrl && logoDimensions ? (
-            <RNImage
-              source={{ uri: logoUrl }}
-              style={logoStyle}
-              resizeMode="contain"
-            />
+            <View style={[{ padding: 12, overflow: 'visible' }, logoGlowStyle]}>
+              <RNImage
+                source={{ uri: logoUrl }}
+                style={logoStyle}
+                resizeMode="contain"
+              />
+            </View>
           ) : (
             <Text style={styles.title}>{title}</Text>
           )}
@@ -4961,6 +5192,107 @@ export default function DetailsScreen() {
           />
         )}
       </View>
+
+      {/* Prequeue stream info display (mobile) */}
+      {prequeueDisplayInfo && (
+        <Animated.View style={[styles.prequeueInfoContainer, prequeuePulseStyle]}>
+          {/* Status message for early stages */}
+          {(prequeueDisplayInfo.status === 'queued' || prequeueDisplayInfo.status === 'searching') && (
+            <Text style={styles.prequeueFilename}>
+              {prequeueDisplayInfo.status === 'queued' && 'Queued...'}
+              {prequeueDisplayInfo.status === 'searching' && 'Searching for streams...'}
+            </Text>
+          )}
+          {/* Failed status */}
+          {prequeueDisplayInfo.status === 'failed' && (
+            <Text style={styles.prequeueFilename}>
+              Failed: {prequeueDisplayInfo.error || 'Unknown error'}
+            </Text>
+          )}
+          {/* Show filename once available (resolving, probing, or ready) */}
+          {(prequeueDisplayInfo.status === 'resolving' || prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'ready') && (
+            <>
+              <Text style={styles.prequeueFilename} numberOfLines={1} ellipsizeMode="middle">
+                {prequeueDisplayInfo.displayName ||
+                  prequeueDisplayInfo.passthroughName ||
+                  (prequeueDisplayInfo.streamPath?.split('/').pop()) ||
+                  (prequeueDisplayInfo.status === 'resolving' ? 'Resolving stream...' : 'Analyzing media...')}
+              </Text>
+              {/* Show loading state for tracks during probing */}
+              {(prequeueDisplayInfo.status === 'probing' || prequeueDisplayInfo.status === 'resolving') &&
+               !prequeueDisplayInfo.audioTracks?.length && (
+                <Text style={styles.prequeueLoadingText}>Analyzing tracks...</Text>
+              )}
+              {/* Audio track - show once tracks are available */}
+              {prequeueDisplayInfo.audioTracks && prequeueDisplayInfo.audioTracks.length > 0 && (
+                <View style={styles.prequeueTrackRow}>
+                  <Text style={styles.prequeueTrackLabel}>Audio:</Text>
+                  <Text style={styles.prequeueTrackValue}>
+                    {(() => {
+                      const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                      const track = selectedIdx !== undefined && selectedIdx >= 0
+                        ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                        : prequeueDisplayInfo.audioTracks?.[0];
+                      if (!track) return 'Default';
+                      return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                    })()}
+                  </Text>
+                  {(() => {
+                    const selectedIdx = prequeueDisplayInfo.selectedAudioTrack;
+                    const track = selectedIdx !== undefined && selectedIdx >= 0
+                      ? prequeueDisplayInfo.audioTracks?.find((t) => t.index === selectedIdx)
+                      : prequeueDisplayInfo.audioTracks?.[0];
+                    if (track?.codec) {
+                      return (
+                        <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackCodecBadge]}>
+                          {track.codec.toUpperCase()}
+                        </Text>
+                      );
+                    }
+                    return null;
+                  })()}
+                </View>
+              )}
+              {/* Subtitle track - show once tracks are available */}
+              {prequeueDisplayInfo.subtitleTracks && prequeueDisplayInfo.subtitleTracks.length > 0 && (
+                <View style={styles.prequeueTrackRow}>
+                  <Text style={styles.prequeueTrackLabel}>Subtitles:</Text>
+                  <Text style={styles.prequeueTrackValue}>
+                    {(() => {
+                      const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                      if (selectedIdx === undefined || selectedIdx < 0) return 'Off';
+                      const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                      if (!track) return 'Off';
+                      return `${formatLanguage(track.language)}${track.title ? ` - ${track.title}` : ''}`;
+                    })()}
+                  </Text>
+                  {(() => {
+                    const selectedIdx = prequeueDisplayInfo.selectedSubtitleTrack;
+                    if (selectedIdx === undefined || selectedIdx < 0) return null;
+                    const track = prequeueDisplayInfo.subtitleTracks?.find((t) => t.index === selectedIdx);
+                    if (!track) return null;
+                    if (track.forced) {
+                      return (
+                        <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackForcedBadge]}>
+                          FORCED
+                        </Text>
+                      );
+                    }
+                    if (track.title?.toLowerCase().includes('sdh') || track.title?.toLowerCase().includes('hearing')) {
+                      return (
+                        <Text style={[styles.prequeueTrackBadge, styles.prequeueTrackSDHBadge]}>
+                          SDH
+                        </Text>
+                      );
+                    }
+                    return null;
+                  })()}
+                </View>
+              )}
+            </>
+          )}
+        </Animated.View>
+      )}
 
       {/* Episode carousel for series */}
       {isSeries && seasons.length > 0 && (
@@ -5164,14 +5496,14 @@ export default function DetailsScreen() {
                     ]}
                     pointerEvents="none">
                     {shouldShowBlurredFill && (
-                      <Image
+                      <RNImage
                         source={{ uri: headerImage }}
                         style={styles.backgroundImageBackdrop}
                         resizeMode="cover"
                         blurRadius={20}
                       />
                     )}
-                    <Image
+                    <RNImage
                       source={{ uri: headerImage }}
                       style={[
                         styles.backgroundImage,

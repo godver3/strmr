@@ -179,6 +179,7 @@ const createStyles = (theme: NovaTheme, windowHeight: number, _windowWidth: numb
       paddingTop: theme.spacing.lg,
       paddingBottom: theme.spacing['3xl'],
       minHeight: windowHeight - contentStartOffset + 100,
+      overflow: 'visible',
     },
   });
 };

@@ -843,6 +843,10 @@ export interface PrequeueStatusResponse {
   selectedAudioTrack?: number;
   selectedSubtitleTrack?: number;
 
+  // Available tracks (for display in UI)
+  audioTracks?: AudioTrackInfo[];
+  subtitleTracks?: SubtitleTrackInfo[];
+
   // Pre-extracted subtitle sessions (for direct streaming/VLC path)
   subtitleSessions?: Record<number, SubtitleSessionInfo>;
 
