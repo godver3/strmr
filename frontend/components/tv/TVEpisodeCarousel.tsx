@@ -347,7 +347,9 @@ const createStyles = (theme: NovaTheme) =>
       borderColor: 'transparent',
     },
     seasonChipSelected: {
-      borderColor: theme.colors.accent.primary,
+      // Selected season uses subtle background tint instead of accent border
+      // to avoid confusion with focus indicator
+      backgroundColor: theme.colors.overlay.medium,
     },
     seasonChipFocused: {
       backgroundColor: theme.colors.accent.primary,

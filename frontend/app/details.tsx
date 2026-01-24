@@ -4544,7 +4544,6 @@ export default function DetailsScreen() {
                   loading={isResolving || (isSeries && episodesLoading)}
                   showReadyPip={prequeueReady}
                   autoFocus
-                  variant="primary"
                 />
               ) : (
                 <FocusablePressable

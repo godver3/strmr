@@ -135,7 +135,8 @@ const createStyles = (theme: NovaTheme) =>
       borderColor: theme.colors.accent.primary,
     },
     containerActive: {
-      borderColor: theme.colors.accent.primary,
+      // Selected episode indicated by "Selected" badge only - no border
+      // to avoid confusion with focus indicator
     },
     image: {
       width: '100%',
