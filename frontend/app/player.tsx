@@ -815,7 +815,7 @@ export default function PlayerScreen() {
   const [nextEpisodePrequeueReady, setNextEpisodePrequeueReady] = useState(false);
   const nextEpisodePrequeueRef = useRef<{
     prequeueId: string | null;
-    targetEpisode: { seasonNumber: number; episodeNumber: number } | null;
+    targetEpisode: { seasonNumber: number; episodeNumber: number; absoluteEpisodeNumber?: number } | null;
     statusResponse: PrequeueStatusResponse | null;
     isShuffleEpisode: boolean;
   }>({ prequeueId: null, targetEpisode: null, statusResponse: null, isShuffleEpisode: false });

@@ -39,7 +39,7 @@ const ActorCard = memo(function ActorCard({
         </View>
       ) : (
         <Image
-          source={{ uri: actor.profileUrl }}
+          source={{ uri: actor.profileUrl! }}
           style={styles.actorPhoto}
           contentFit="cover"
           onError={handleImageError}

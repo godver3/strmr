@@ -198,7 +198,7 @@ const MobileEpisodeCarousel = memo(function MobileEpisodeCarousel({
                 style={[styles.seasonChip, isSelected && styles.seasonChipSelected]}
                 onPress={() => handleSeasonPress(season)}>
                 <MarqueeText
-                  style={[styles.seasonChipText, isSelected && styles.seasonChipTextSelected]}
+                  style={[styles.seasonChipText, isSelected ? styles.seasonChipTextSelected : undefined]}
                   containerStyle={styles.seasonChipTextContainer}
                   focused={isSelected}
                   speed={25}

@@ -1177,8 +1177,8 @@ const createStyles = (theme: NovaTheme) => {
       flexDirection: 'row',
     },
     personPhoto: {
-      width: Platform.isTV ? 225 : responsiveSize(100, 120, 150),
-      height: Platform.isTV ? 338 : responsiveSize(150, 180, 225),
+      width: Platform.isTV ? 225 : responsiveSize(120, 100),
+      height: Platform.isTV ? 338 : responsiveSize(180, 150),
       borderRadius: Platform.isTV ? theme.radius.md * 1.5 : theme.radius.md,
       backgroundColor: theme.colors.background.surface,
       marginRight: Platform.isTV ? theme.spacing.lg * 1.5 : theme.spacing.lg,

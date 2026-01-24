@@ -5630,7 +5630,7 @@ export default function DetailsScreen() {
         isMobile={isMobile}
         maxHeight={manualResultsMaxHeight}
         demoMode={settings?.demoMode}
-        userSettings={userSettings}
+        userSettings={userSettings ?? undefined}
         contentPreference={contentPreference}
       />
       <SeasonSelector

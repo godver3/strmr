@@ -2525,7 +2525,7 @@ function IndexScreen() {
                       <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
                         {focusedDesktopCard.title}
                       </Text>
-                      {focusedDesktopCard.year != null && focusedDesktopCard.year > 0 && (
+                      {focusedDesktopCard.year != null && Number(focusedDesktopCard.year) > 0 && (
                         <Text
                           style={[
                             desktopStyles?.styles.topYear,
@@ -2574,7 +2574,7 @@ function IndexScreen() {
                     <Text style={desktopStyles?.styles.topTitle} numberOfLines={2}>
                       {focusedDesktopCard.title}
                     </Text>
-                    {focusedDesktopCard.year != null && focusedDesktopCard.year > 0 && (
+                    {focusedDesktopCard.year != null && Number(focusedDesktopCard.year) > 0 && (
                       <Text style={desktopStyles?.styles.topYear}>{focusedDesktopCard.year}</Text>
                     )}
                     <Text style={desktopStyles?.styles.topDescription} numberOfLines={6}>

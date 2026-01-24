@@ -628,7 +628,7 @@ export const SeriesEpisodes = ({
                             isFocused && styles.seasonCardFocused,
                           ]}>
                           <MarqueeText
-                            style={[styles.seasonCardTitle, (isFocused || isActive) && styles.seasonCardTitleActive]}
+                            style={[styles.seasonCardTitle, (isFocused || isActive) ? styles.seasonCardTitleActive : undefined]}
                             containerStyle={styles.seasonCardTitleContainer}
                             focused={isFocused}
                             speed={30}

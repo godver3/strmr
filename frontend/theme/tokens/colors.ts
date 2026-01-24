@@ -30,6 +30,7 @@ type ColorPalette = {
   overlay: {
     scrim: string;
     button: string;
+    medium: string;
   };
 };
 
@@ -63,6 +64,7 @@ const darkPalette: ColorPalette = {
   overlay: {
     scrim: 'rgba(11, 11, 15, 0.72)',
     button: 'rgba(255, 255, 255, 0.12)',
+    medium: 'rgba(255, 255, 255, 0.08)',
   },
 };
 
@@ -96,6 +98,7 @@ const lightPalette: ColorPalette = {
   overlay: {
     scrim: 'rgba(10, 12, 16, 0.68)',
     button: 'rgba(15, 23, 42, 0.08)',
+    medium: 'rgba(15, 23, 42, 0.06)',
   },
 };
 

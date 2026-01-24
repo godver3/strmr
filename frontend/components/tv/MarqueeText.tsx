@@ -18,7 +18,7 @@ import Animated, {
 
 interface MarqueeTextProps {
   children: string;
-  style?: TextStyle | TextStyle[];
+  style?: TextStyle | (TextStyle | undefined)[];
   containerStyle?: ViewStyle;
   focused?: boolean;
   /** Delay before starting animation (ms) */
