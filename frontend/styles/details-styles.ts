@@ -133,6 +133,13 @@ export const createDetailsStyles = (theme: NovaTheme) => {
           }
         : null),
     },
+    titleLogo: {
+      // Bounding box approach - logo scales to fit within these constraints
+      // while maintaining its natural aspect ratio
+      maxWidth: isTV ? '30%' : '45%',
+      maxHeight: isTV ? tvScale * 120 : 80,
+      alignSelf: 'flex-start',
+    },
     ratingsRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -161,6 +168,30 @@ export const createDetailsStyles = (theme: NovaTheme) => {
     },
     ratingLabel: {
       fontSize: Math.round(12 * tvTextScale),
+      color: theme.colors.text.secondary,
+    },
+    genresRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: Math.round(8 * tvTextScale),
+      marginBottom: theme.spacing.md,
+      ...(isTV
+        ? {
+            marginLeft: tvScale * 48,
+          }
+        : null),
+    },
+    genreBadge: {
+      backgroundColor: 'rgba(255, 255, 255, 0.12)',
+      paddingHorizontal: Math.round(12 * tvTextScale),
+      paddingVertical: Math.round(6 * tvTextScale),
+      borderRadius: Math.round(16 * tvScale),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255, 255, 255, 0.2)',
+    },
+    genreText: {
+      fontSize: Math.round(12 * tvTextScale),
+      fontWeight: '500',
       color: theme.colors.text.secondary,
     },
     releaseInfoRow: {

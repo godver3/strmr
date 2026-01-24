@@ -44,6 +44,7 @@ type Title struct {
 	Language        string    `json:"language"`
 	Poster          *Image    `json:"poster,omitempty"`
 	Backdrop        *Image    `json:"backdrop,omitempty"`
+	Logo            *Image    `json:"logo,omitempty"`
 	MediaType       string    `json:"mediaType"` // series | movie
 	TVDBID          int64     `json:"tvdbId,omitempty"`
 	IMDBID          string    `json:"imdbId,omitempty"`
@@ -60,6 +61,7 @@ type Title struct {
 	Credits         *Credits    `json:"credits,omitempty"`        // Top billed cast
 	RuntimeMinutes  int         `json:"runtimeMinutes,omitempty"` // Runtime in minutes (movies only)
 	Collection      *Collection `json:"collection,omitempty"`     // Movie collection (movies only)
+	Genres          []string    `json:"genres,omitempty"`         // Genre names from TMDB
 }
 
 type TrendingItem struct {

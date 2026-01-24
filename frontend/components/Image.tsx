@@ -24,7 +24,7 @@ const DEBUG_DISABLE_IMAGES = __DEV__ && false;
 const USE_IMAGE_PROXY = true;
 const IMAGE_PROXY_QUALITY = 80; // JPEG quality
 // Dynamic max widths based on image type - backdrops/heroes need higher resolution
-const IMAGE_PROXY_MAX_WIDTH_POSTER = 500; // Posters are displayed smaller
+const IMAGE_PROXY_MAX_WIDTH_POSTER = 780; // Match TMDB w780 poster size
 const IMAGE_PROXY_MAX_WIDTH_BACKDROP = 1280; // Backdrops/heroes need HD quality
 const DEBUG_IMAGE_PROXY = __DEV__ && false; // Log proxy URL conversions
 
@@ -45,6 +45,7 @@ function getProxyUrl(url: string, targetWidth?: number): string {
     return url;
   }
 
+
   // Build proxy URL with resize parameters
   const baseUrl = API_CONFIG.BASE_URL.replace(/\/api$/, ''); // Remove /api suffix
   const params = new URLSearchParams({
@@ -53,17 +54,23 @@ function getProxyUrl(url: string, targetWidth?: number): string {
 
   // Add target width - use explicit width if available, otherwise default to reasonable size
   // This ensures images are always resized to reduce memory usage
-  // Backdrops (hero images) use /original/ path and need higher resolution
-  const isBackdrop = url.includes('/original/') || url.includes('/w1280/');
-  const maxWidth = isBackdrop ? IMAGE_PROXY_MAX_WIDTH_BACKDROP : IMAGE_PROXY_MAX_WIDTH_POSTER;
+  // Large images (backdrops, w780 posters for backgrounds) should not be resized down
+  const isLargeImage = url.includes('/original/') || url.includes('/w1280/') || url.includes('/w780/');
+
+  // Skip proxy entirely for large images used as backgrounds - they need full resolution
+  if (isLargeImage && (!targetWidth || targetWidth === 0)) {
+    return url;
+  }
+
+  const maxWidth = isLargeImage ? IMAGE_PROXY_MAX_WIDTH_BACKDROP : IMAGE_PROXY_MAX_WIDTH_POSTER;
 
   let proxyWidth: number;
   if (targetWidth && targetWidth > 0) {
     // Request 2x size for retina displays, but cap at type-specific max
     proxyWidth = Math.min(targetWidth * 2, maxWidth);
   } else {
-    // Default: use type-specific max for backdrops, smaller for posters
-    proxyWidth = isBackdrop ? maxWidth : Math.min(300, maxWidth);
+    // Default: use max width for the image type
+    proxyWidth = maxWidth;
   }
   params.set('w', proxyWidth.toString());
 

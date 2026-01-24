@@ -133,6 +133,7 @@ export interface Title {
   language: string;
   poster?: Image;
   backdrop?: Image;
+  logo?: Image;
   mediaType: string;
   tvdbId?: number;
   imdbId?: string;
@@ -149,6 +150,7 @@ export interface Title {
   credits?: Credits;
   runtimeMinutes?: number; // Runtime in minutes (movies only)
   collection?: Collection; // Movie collection (movies only)
+  genres?: string[]; // Genre names from TMDB
 }
 
 export interface TrendingItem {

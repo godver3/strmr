@@ -53,7 +53,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter, usePathname } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
+import { Image as RNImage, ImageResizeMode, ImageStyle, Platform, Pressable, Text, View } from 'react-native';
+import { Image as ProxiedImage } from '@/components/Image';
 import { createDetailsStyles } from '@/styles/details-styles';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import Animated, {
@@ -202,7 +203,7 @@ const RatingBadge = ({
   return (
     <View style={styles.ratingBadge}>
       {config.iconUrl && !imageError ? (
-        <Image
+        <RNImage
           source={{ uri: config.iconUrl }}
           style={{ width: iconSize, height: iconSize }}
           resizeMode="contain"
@@ -322,38 +323,96 @@ export default function DetailsScreen() {
   const initialSeasonParam = toStringParam(params.initialSeason);
   const initialEpisodeParam = toStringParam(params.initialEpisode);
 
-  // Compute final poster and backdrop URLs, preferring fetched metadata over params
+  // Compute final poster URL - prefer fetched metadata for textless posters
   const posterUrl = useMemo(() => {
-    // For movies, use fetched details if available
+    // Prefer fetched details (may have textless poster)
     if (!isSeries && movieDetails?.poster?.url) {
-      console.log('[Details] Using fetched movie poster:', movieDetails.poster.url);
       return movieDetails.poster.url;
     }
-    // For series, use fetched details if available
     if (isSeries && seriesDetailsForBackdrop?.poster?.url) {
-      console.log('[Details] Using fetched series poster:', seriesDetailsForBackdrop.poster.url);
       return seriesDetailsForBackdrop.poster.url;
     }
     // Fall back to params
-    console.log('[Details] Using poster param:', posterUrlParam);
     return posterUrlParam;
   }, [isSeries, movieDetails, seriesDetailsForBackdrop, posterUrlParam]);
 
   const backdropUrl = useMemo(() => {
-    // For movies, use fetched details if available
+    // Backdrop can update from fetched data since it's less prominent
     if (!isSeries && movieDetails?.backdrop?.url) {
-      console.log('[Details] Using fetched movie backdrop:', movieDetails.backdrop.url);
       return movieDetails.backdrop.url;
     }
-    // For series, use fetched details if available
     if (isSeries && seriesDetailsForBackdrop?.backdrop?.url) {
-      console.log('[Details] Using fetched series backdrop:', seriesDetailsForBackdrop.backdrop.url);
       return seriesDetailsForBackdrop.backdrop.url;
     }
-    // Fall back to params
-    console.log('[Details] Using backdrop param:', backdropUrlParam);
     return backdropUrlParam;
   }, [isSeries, movieDetails, seriesDetailsForBackdrop, backdropUrlParam]);
+
+  // Compute logo URL from fetched metadata
+  const logoUrl = useMemo(() => {
+    if (!isSeries && movieDetails?.logo?.url) {
+      return movieDetails.logo.url;
+    }
+    if (isSeries && seriesDetailsForBackdrop?.logo?.url) {
+      return seriesDetailsForBackdrop.logo.url;
+    }
+    return null;
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
+
+  // Measure logo dimensions to calculate proper sizing within bounding box
+  const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!logoUrl) {
+      setLogoDimensions(null);
+      return;
+    }
+    RNImage.getSize(
+      logoUrl,
+      (width, height) => setLogoDimensions({ width, height }),
+      () => setLogoDimensions(null)
+    );
+  }, [logoUrl]);
+
+  // Preload poster/backdrop image so it's ready when page displays
+  const [isPosterPreloaded, setIsPosterPreloaded] = useState(false);
+  const posterToPreload = posterUrl || backdropUrl;
+  useEffect(() => {
+    if (!posterToPreload) {
+      setIsPosterPreloaded(true);
+      return;
+    }
+    setIsPosterPreloaded(false);
+    RNImage.prefetch(posterToPreload)
+      .then(() => setIsPosterPreloaded(true))
+      .catch(() => setIsPosterPreloaded(true)); // Still show page on error
+  }, [posterToPreload]);
+
+  // Calculate logo style to fit within bounding box while preserving aspect ratio
+  const logoStyle = useMemo(() => {
+    if (!logoDimensions) return styles.titleLogo;
+
+    const { width: imgWidth, height: imgHeight } = logoDimensions;
+    const aspectRatio = imgWidth / imgHeight;
+
+    // Bounding box constraints
+    const maxWidth = windowWidth * (isTV ? 0.3 : 0.8);
+    const maxHeight = isTV ? tvScale * 120 : 80;
+
+    // Calculate dimensions to fit within bounding box
+    let finalWidth = maxWidth;
+    let finalHeight = finalWidth / aspectRatio;
+
+    // If too tall, constrain by height instead
+    if (finalHeight > maxHeight) {
+      finalHeight = maxHeight;
+      finalWidth = finalHeight * aspectRatio;
+    }
+
+    return {
+      width: finalWidth,
+      height: finalHeight,
+      alignSelf: 'flex-start' as const,
+    };
+  }, [logoDimensions, windowWidth, isTV, tvScale, styles.titleLogo]);
 
   // Compute final description/overview, preferring params but falling back to fetched metadata
   const displayDescription = useMemo(() => {
@@ -471,7 +530,7 @@ export default function DetailsScreen() {
       };
     }
 
-    Image.getSize(
+    RNImage.getSize(
       headerImage,
       (width, height) => {
         if (cancelled) {
@@ -1895,6 +1954,12 @@ export default function DetailsScreen() {
   // Show ratings skeleton while loading to prevent layout shift
   const isMetadataLoadingForSkeleton = isSeries ? seriesDetailsLoading : movieDetailsLoading;
   const shouldShowRatingsSkeleton = isMetadataLoadingForSkeleton && ratings.length === 0;
+
+  // Get top 3 genres from movie or series details
+  const genres = useMemo(() => {
+    const rawGenres = isSeries ? (seriesDetailsForBackdrop?.genres ?? []) : (movieDetails?.genres ?? []);
+    return rawGenres.slice(0, 3);
+  }, [isSeries, movieDetails, seriesDetailsForBackdrop]);
 
   // Placeholder release rows while loading (movies only)
   const releaseSkeletonRows = useMemo(() => {
@@ -4148,7 +4213,15 @@ export default function DetailsScreen() {
             : undefined
         }>
         <View style={styles.titleRow}>
-          <Text style={styles.title}>{title}</Text>
+          {logoUrl && logoDimensions ? (
+            <RNImage
+              source={{ uri: logoUrl }}
+              style={logoStyle}
+              resizeMode="contain"
+            />
+          ) : (
+            <Text style={styles.title}>{title}</Text>
+          )}
         </View>
         {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
           <View style={styles.ratingsRow}>
@@ -4170,6 +4243,15 @@ export default function DetailsScreen() {
             ) : (
               <Text style={styles.ratingValue}>—</Text>
             )}
+          </View>
+        )}
+        {genres.length > 0 && (
+          <View style={styles.genresRow}>
+            {genres.map((genre) => (
+              <View key={genre} style={styles.genreBadge}>
+                <Text style={styles.genreText}>{genre}</Text>
+              </View>
+            ))}
           </View>
         )}
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
@@ -4714,7 +4796,15 @@ export default function DetailsScreen() {
       {/* Title and metadata section */}
       <View style={styles.topContent}>
         <View style={styles.titleRow}>
-          <Text style={styles.title}>{title}</Text>
+          {logoUrl && logoDimensions ? (
+            <RNImage
+              source={{ uri: logoUrl }}
+              style={logoStyle}
+              resizeMode="contain"
+            />
+          ) : (
+            <Text style={styles.title}>{title}</Text>
+          )}
         </View>
         {(ratings.length > 0 || shouldShowRatingsSkeleton) && (
           <View style={styles.ratingsRow}>
@@ -4736,6 +4826,15 @@ export default function DetailsScreen() {
             ) : (
               <Text style={styles.ratingValue}>—</Text>
             )}
+          </View>
+        )}
+        {genres.length > 0 && (
+          <View style={styles.genresRow}>
+            {genres.map((genre) => (
+              <View key={genre} style={styles.genreBadge}>
+                <Text style={styles.genreText}>{genre}</Text>
+              </View>
+            ))}
           </View>
         )}
         {contentPreference && (contentPreference.audioLanguage || contentPreference.subtitleLanguage) && (
@@ -4963,9 +5062,11 @@ export default function DetailsScreen() {
   const SafeAreaWrapper = isTV ? View : FixedSafeAreaView;
   const safeAreaProps = isTV ? {} : { edges: ['top'] as ('top' | 'bottom' | 'left' | 'right')[] };
 
-  // On TV/mobile, wait for metadata to load before showing the page to prevent background "pop"
+  // On TV/mobile, wait for metadata, logo, and poster to load before showing the page to prevent pop-in
   const isMetadataLoading = isSeries ? seriesDetailsLoading : movieDetailsLoading;
-  const shouldHideUntilMetadataReady = (isTV || isMobile) && isMetadataLoading;
+  const isLogoReady = !logoUrl || logoDimensions !== null;
+  const isPosterReady = isPosterPreloaded;
+  const shouldHideUntilMetadataReady = (isTV || isMobile) && (isMetadataLoading || !isLogoReady || !isPosterReady);
   const shouldAnimateBackground = isTV || isMobile;
 
   // Fade in background when metadata is ready
@@ -5029,9 +5130,12 @@ export default function DetailsScreen() {
 
   console.log('[Details] Visibility state:', {
     shouldHideUntilMetadataReady,
-    shouldAnimateBackground,
-    movieDetailsLoading,
-    hasTriggeredFadeIn: hasTriggeredFadeIn.current,
+    isMetadataLoading,
+    isLogoReady,
+    isPosterReady,
+    logoUrl: !!logoUrl,
+    logoDimensions: !!logoDimensions,
+    posterToPreload: !!posterToPreload,
   });
 
   return (
@@ -5050,12 +5154,15 @@ export default function DetailsScreen() {
         <Stack.Screen options={{ headerShown: false }} />
         <SafeAreaWrapper style={styles.safeArea} {...safeAreaProps}>
           <View style={styles.container}>
-            {/* Mobile uses the new parallax scrollable container */}
-            {isMobile ? (
-              renderMobileContent()
-            ) : (
+            {/* Hide all content until metadata (and logo) is ready to prevent progressive loading */}
+            {shouldHideUntilMetadataReady ? null : (
               <>
-                {headerImage && !shouldHideUntilMetadataReady ? (
+                {/* Mobile uses the new parallax scrollable container */}
+                {isMobile ? (
+                  renderMobileContent()
+                ) : (
+                  <>
+                    {headerImage ? (
                   <Animated.View
                     style={[
                       styles.backgroundImageContainer,
@@ -5145,9 +5252,11 @@ export default function DetailsScreen() {
                     </View>
                   </View>
                 )}
-              </>
-            )}
-            {/* Corner poster removed - was covering backdrop art. Plex style shows full backdrop instead */}
+                </>
+              )}
+            </>
+          )}
+          {/* Corner poster removed - was covering backdrop art. Plex style shows full backdrop instead */}
           </View>
         </SafeAreaWrapper>
         <MobileTabBar />

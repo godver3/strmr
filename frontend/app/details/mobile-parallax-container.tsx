@@ -25,9 +25,9 @@ interface MobileParallaxContainerProps {
 }
 
 // Distance in pixels for the poster transition effect
-const POSTER_TRANSITION_DISTANCE = 300;
+const POSTER_TRANSITION_DISTANCE = 500;
 // Minimum opacity for poster when scrolled (never fully fades)
-const POSTER_MIN_OPACITY = 0.45;
+const POSTER_MIN_OPACITY = 0.6;
 // How far down the screen the content starts (as percentage of screen height)
 const CONTENT_START_PERCENT = 0.62;
 
@@ -77,12 +77,17 @@ const MobileParallaxContainer = memo(function MobileParallaxContainer({
       {imageUrl && (
         <Animated.View style={[styles.posterContainer, posterAnimatedStyle]}>
           <View style={styles.posterImageWrapper}>
-            <Image source={{ uri: imageUrl }} style={styles.posterImage} contentFit="fill" />
+            <Image
+              source={{ uri: imageUrl }}
+              style={styles.posterImage}
+              contentFit="fill"
+              transition={300}
+            />
           </View>
-          {/* Lower third gradient to darken bottom of poster */}
+          {/* Bottom gradient to fade poster to background color - 40% height, solid by 15% from bottom */}
           <LinearGradient
-            colors={['transparent', 'rgba(0, 0, 0, 0.5)', theme.colors.background.base]}
-            locations={[0, 0.5, 1]}
+            colors={['transparent', theme.colors.background.base, theme.colors.background.base]}
+            locations={[0, 0.625, 1]}
             style={styles.posterBottomGradient}
             pointerEvents="none"
           />
@@ -157,7 +162,7 @@ const createStyles = (theme: NovaTheme, windowHeight: number, _windowWidth: numb
       left: 0,
       right: 0,
       bottom: 0,
-      height: '40%', // Lower third gradient
+      height: '40%', // Gradient starts 40% up, reaches solid background at 15% from bottom
     },
     scrollView: {
       flex: 1,

@@ -1638,6 +1638,26 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			}
 		}
 
+		// Only fetch logo if missing - don't replace existing poster to avoid visual flash
+		if cached.Title.Logo == nil && cached.Title.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			if images, err := s.tmdb.fetchImages(ctx, "series", cached.Title.TMDBID); err == nil && images != nil {
+				if images.Logo != nil {
+					cached.Title.Logo = images.Logo
+					log.Printf("[metadata] logo added to cached series tmdbId=%d", cached.Title.TMDBID)
+					_ = s.cache.set(cacheID, cached)
+				}
+			}
+		}
+
+		// If cached data doesn't have genres, fetch them from TMDB
+		if len(cached.Title.Genres) == 0 && cached.Title.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			if genres, err := s.tmdb.fetchSeriesGenres(ctx, cached.Title.TMDBID); err == nil && len(genres) > 0 {
+				cached.Title.Genres = genres
+				log.Printf("[metadata] genres added to cached series tmdbId=%d", cached.Title.TMDBID)
+				_ = s.cache.set(cacheID, cached)
+			}
+		}
+
 		// In demo mode, clamp to season 1 only (skip season 0/specials if present)
 		if s.demo && len(cached.Seasons) > 0 {
 			var season1 *models.SeriesSeason
@@ -2018,6 +2038,34 @@ func (s *Service) SeriesDetails(ctx context.Context, req models.SeriesDetailsQue
 			log.Printf("[metadata] fetched %d cast members for series tmdbId=%d", len(credits.Cast), seriesTitle.TMDBID)
 		} else if err != nil {
 			log.Printf("[metadata] failed to fetch credits for series tmdbId=%d: %v", seriesTitle.TMDBID, err)
+		}
+	}
+
+	// Fetch logo and textless poster from TMDB if configured
+	if seriesTitle.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if images, err := s.tmdb.fetchImages(ctx, "series", seriesTitle.TMDBID); err == nil && images != nil {
+			if images.Logo != nil {
+				seriesTitle.Logo = images.Logo
+				log.Printf("[metadata] fetched logo for series tmdbId=%d", seriesTitle.TMDBID)
+			}
+			if images.TextlessPoster != nil {
+				seriesTitle.Poster = images.TextlessPoster
+				log.Printf("[metadata] textless poster applied to series tmdbId=%d", seriesTitle.TMDBID)
+			}
+			details.Title = seriesTitle // Update the details with images
+		} else if err != nil {
+			log.Printf("[metadata] failed to fetch images for series tmdbId=%d: %v", seriesTitle.TMDBID, err)
+		}
+	}
+
+	// Fetch genres from TMDB if configured
+	if seriesTitle.TMDBID > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if genres, err := s.tmdb.fetchSeriesGenres(ctx, seriesTitle.TMDBID); err == nil && len(genres) > 0 {
+			seriesTitle.Genres = genres
+			details.Title = seriesTitle
+			log.Printf("[metadata] fetched %d genres for series tmdbId=%d", len(genres), seriesTitle.TMDBID)
+		} else if err != nil {
+			log.Printf("[metadata] failed to fetch genres for series tmdbId=%d: %v", seriesTitle.TMDBID, err)
 		}
 	}
 
@@ -2616,6 +2664,25 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 			}
 		}
 
+		// Enrich with logo and textless poster if available
+		tmdbIDForImages := cached.TMDBID
+		if tmdbIDForImages == 0 {
+			tmdbIDForImages = req.TMDBID
+		}
+		// Only fetch logo if missing - don't replace existing poster to avoid visual flash
+		if cached.Logo == nil && tmdbIDForImages > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+			if images, err := s.tmdb.fetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
+				if images.Logo != nil {
+					cached.Logo = images.Logo
+					log.Printf("[metadata] logo added to cached movie tmdbId=%d", tmdbIDForImages)
+					_ = s.cache.set(cacheID, cached)
+				}
+			}
+		}
+
+		// If cached data doesn't have genres, they'll be fetched on next fresh fetch
+		// (Movies get genres from the movieDetails call which has them inline)
+
 		return &cached, nil
 	}
 
@@ -2760,6 +2827,26 @@ func (s *Service) movieDetailsInternal(ctx context.Context, req models.MovieDeta
 		}
 	}
 
+	// Fetch logo and textless poster from TMDB if configured
+	tmdbIDForImages := movieTitle.TMDBID
+	if tmdbIDForImages == 0 {
+		tmdbIDForImages = req.TMDBID
+	}
+	if tmdbIDForImages > 0 && s.tmdb != nil && s.tmdb.isConfigured() {
+		if images, err := s.tmdb.fetchImages(ctx, "movie", tmdbIDForImages); err == nil && images != nil {
+			if images.Logo != nil {
+				movieTitle.Logo = images.Logo
+				log.Printf("[metadata] fetched logo for movie tmdbId=%d", tmdbIDForImages)
+			}
+			if images.TextlessPoster != nil {
+				movieTitle.Poster = images.TextlessPoster
+				log.Printf("[metadata] textless poster applied to movie tmdbId=%d", tmdbIDForImages)
+			}
+		} else if err != nil {
+			log.Printf("[metadata] failed to fetch images for movie tmdbId=%d: %v", tmdbIDForImages, err)
+		}
+	}
+
 	// Cache the result
 	_ = s.cache.set(cacheID, movieTitle)
 
@@ -2821,6 +2908,11 @@ func (s *Service) maybeHydrateMovieArtworkFromTMDB(ctx context.Context, title *m
 	if title.Collection == nil && tmdbMovie.Collection != nil {
 		title.Collection = tmdbMovie.Collection
 		log.Printf("[metadata] using TMDB collection for movie tmdbId=%d collection=%q collectionId=%d", tmdbID, tmdbMovie.Collection.Name, tmdbMovie.Collection.ID)
+		updated = true
+	}
+	if len(title.Genres) == 0 && len(tmdbMovie.Genres) > 0 {
+		title.Genres = tmdbMovie.Genres
+		log.Printf("[metadata] using TMDB genres for movie tmdbId=%d genres=%v", tmdbID, tmdbMovie.Genres)
 		updated = true
 	}
 

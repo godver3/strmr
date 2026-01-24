@@ -26,9 +26,10 @@ const (
 	// Posters: w500 = 500px wide (plenty for TV cards ~200-300px)
 	// Backdrops: w1280 = 1280px wide (good for 1080p backgrounds)
 	// Profiles: w185 = 185px wide (good for cast member photos)
-	tmdbPosterSize   = "w500"
+	tmdbPosterSize   = "w780"
 	tmdbBackdropSize = "w1280"
 	tmdbProfileSize  = "w185"
+	tmdbLogoSize     = "w500"
 )
 
 type tmdbClient struct {
@@ -315,6 +316,128 @@ func buildTMDBImage(imagePath, size, imageType string) *models.Image {
 		URL:  fmt.Sprintf("%s/%s", tmdbImageBaseURL, fullPath),
 		Type: imageType,
 	}
+}
+
+// tmdbImageItem represents a single image from TMDB's /images endpoint
+type tmdbImageItem struct {
+	FilePath    string  `json:"file_path"`
+	AspectRatio float64 `json:"aspect_ratio"`
+	Height      int     `json:"height"`
+	Width       int     `json:"width"`
+	VoteAverage float64 `json:"vote_average"`
+	ISO6391     string  `json:"iso_639_1"`
+}
+
+// tmdbImagesResponse represents the response from TMDB's /images endpoint
+type tmdbImagesResponse struct {
+	Logos   []tmdbImageItem `json:"logos"`
+	Posters []tmdbImageItem `json:"posters"`
+}
+
+// tmdbImagesResult contains logo and textless poster from a single /images API call
+type tmdbImagesResult struct {
+	Logo           *models.Image
+	TextlessPoster *models.Image
+}
+
+// fetchImages retrieves logo and textless poster for a movie or TV show from TMDB
+// Uses a single API call to get both, improving efficiency
+func (c *tmdbClient) fetchImages(ctx context.Context, mediaType string, tmdbID int64) (*tmdbImagesResult, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	// Map "series" to "tv" for TMDB API
+	apiMediaType := strings.ToLower(strings.TrimSpace(mediaType))
+	if apiMediaType != "movie" {
+		apiMediaType = "tv"
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, apiMediaType, fmt.Sprintf("%d", tmdbID), "images")
+	if err != nil {
+		return nil, err
+	}
+	// Don't pass language param to get all images, then filter by preference
+	endpoint = endpoint + "?api_key=" + c.apiKey
+
+	var payload tmdbImagesResponse
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb images for %s/%d failed: %w", apiMediaType, tmdbID, err)
+	}
+
+	result := &tmdbImagesResult{}
+
+	// Find best logo: prefer English, then no-language, then by vote average
+	if len(payload.Logos) > 0 {
+		sort.Slice(payload.Logos, func(i, j int) bool {
+			li, lj := payload.Logos[i], payload.Logos[j]
+			// Prefer English
+			iEng := li.ISO6391 == "en"
+			jEng := lj.ISO6391 == "en"
+			if iEng != jEng {
+				return iEng
+			}
+			// Then prefer no-language (often works universally)
+			iNull := li.ISO6391 == ""
+			jNull := lj.ISO6391 == ""
+			if iNull != jNull {
+				return iNull
+			}
+			// Finally sort by vote average
+			return li.VoteAverage > lj.VoteAverage
+		})
+		result.Logo = buildTMDBImage(payload.Logos[0].FilePath, tmdbLogoSize, "logo")
+	}
+
+	// Find best textless poster (no language = textless)
+	if len(payload.Posters) > 0 {
+		var textless []tmdbImageItem
+		for _, p := range payload.Posters {
+			if p.ISO6391 == "" {
+				textless = append(textless, p)
+			}
+		}
+		if len(textless) > 0 {
+			// Sort by vote average (highest first)
+			sort.Slice(textless, func(i, j int) bool {
+				return textless[i].VoteAverage > textless[j].VoteAverage
+			})
+			result.TextlessPoster = buildTMDBImage(textless[0].FilePath, tmdbPosterSize, "poster")
+		}
+	}
+
+	return result, nil
+}
+
+// fetchSeriesGenres retrieves genres for a TV series from TMDB
+func (c *tmdbClient) fetchSeriesGenres(ctx context.Context, tmdbID int64) ([]string, error) {
+	if !c.isConfigured() {
+		return nil, errors.New("tmdb api key not configured")
+	}
+
+	endpoint, err := url.JoinPath(tmdbBaseURL, "tv", fmt.Sprintf("%d", tmdbID))
+	if err != nil {
+		return nil, err
+	}
+	endpoint = endpoint + "?api_key=" + c.apiKey
+
+	var payload struct {
+		Genres []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"genres"`
+	}
+	if err := c.doGET(ctx, endpoint, &payload); err != nil {
+		return nil, fmt.Errorf("tmdb tv/%d failed: %w", tmdbID, err)
+	}
+
+	var genres []string
+	for _, g := range payload.Genres {
+		if g.Name != "" {
+			genres = append(genres, g.Name)
+		}
+	}
+	return genres, nil
 }
 
 func normalizeLanguage(lang string) string {
@@ -663,6 +786,10 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 		ReleaseDate         string `json:"release_date"`
 		IMDBId              string `json:"imdb_id"`
 		Runtime             int    `json:"runtime"`
+		Genres              []struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"genres"`
 		BelongsToCollection *struct {
 			ID           int64  `json:"id"`
 			Name         string `json:"name"`
@@ -703,6 +830,13 @@ func (c *tmdbClient) movieDetails(ctx context.Context, tmdbID int64) (*models.Ti
 		}
 		if backdrop := buildTMDBImage(movie.BelongsToCollection.BackdropPath, tmdbBackdropSize, "backdrop"); backdrop != nil {
 			title.Collection.Backdrop = backdrop
+		}
+	}
+
+	// Extract genre names
+	for _, g := range movie.Genres {
+		if g.Name != "" {
+			title.Genres = append(title.Genres, g.Name)
 		}
 	}
 
