@@ -866,8 +866,8 @@ func (h *PrequeueHandler) runPrequeueWorker(prequeueID, titleID, titleName, imdb
 			for i, s := range subtitleStreams {
 				codec := strings.ToLower(s.Codec)
 				subtitleTracks[i] = playback.SubtitleTrackInfo{
-					Index:         i,       // Relative index for frontend
-					AbsoluteIndex: s.Index, // Absolute ffprobe stream index for ffmpeg -map
+					Index:         s.Index, // Absolute ffprobe stream index (matches selectedSubtitleTrack)
+					AbsoluteIndex: s.Index, // Also stored here for clarity
 					Language:      s.Language,
 					Title:         s.Title,
 					Codec:         s.Codec,
