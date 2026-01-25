@@ -11,6 +11,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
 import { isTablet } from '@/theme/tokens/tvScale';
+import type { EPGProgram } from '@/services/api';
 
 interface ControlsProps {
   paused: boolean;
@@ -65,6 +66,10 @@ interface ControlsProps {
   onEnterPip?: () => void;
   /** Flash the skip button on double-tap (mobile only) */
   flashSkipButton?: 'backward' | 'forward' | null;
+  /** EPG current program for live TV */
+  currentProgram?: EPGProgram;
+  /** EPG next program for live TV */
+  nextProgram?: EPGProgram;
 }
 
 type TrackOption = {
@@ -118,6 +123,8 @@ const Controls: React.FC<ControlsProps> = ({
   seekForwardSeconds = 30,
   onEnterPip,
   flashSkipButton,
+  currentProgram,
+  nextProgram,
 }) => {
   const theme = useTheme();
   const { width, height } = useTVDimensions();
@@ -502,6 +509,18 @@ const Controls: React.FC<ControlsProps> = ({
                     <View style={styles.liveBadge}>
                       <Text style={styles.liveBadgeText}>LIVE</Text>
                     </View>
+                    {currentProgram && (
+                      <View style={styles.epgContainer}>
+                        <Text style={styles.epgTitle} numberOfLines={1}>
+                          {currentProgram.title}
+                        </Text>
+                        {nextProgram && (
+                          <Text style={styles.epgNext} numberOfLines={1}>
+                            Next: {nextProgram.title}
+                          </Text>
+                        )}
+                      </View>
+                    )}
                   </View>
                 )}
               </View>
@@ -827,9 +846,10 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       marginHorizontal: theme.spacing.sm,
     },
     liveContainer: {
-      height: theme.spacing['2xl'],
-      justifyContent: 'center',
-      alignItems: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.md,
+      minHeight: theme.spacing['2xl'],
     },
     liveBadge: {
       backgroundColor: theme.colors.accent.primary,
@@ -843,6 +863,20 @@ const useControlsStyles = (theme: NovaTheme, screenWidth: number) => {
       color: theme.colors.text.inverse,
       fontWeight: '600',
       letterSpacing: 1.5,
+    },
+    epgContainer: {
+      flex: 1,
+      justifyContent: 'center',
+    },
+    epgTitle: {
+      ...theme.typography.body.md,
+      color: theme.colors.text.primary,
+      fontWeight: '500',
+    },
+    epgNext: {
+      ...theme.typography.body.sm,
+      color: theme.colors.text.secondary,
+      marginTop: 2,
     },
     controlButton: {
       marginRight: theme.spacing.md,

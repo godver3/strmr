@@ -744,6 +744,38 @@ export interface LiveChannelsResponse {
   availableCategories: string[];
 }
 
+// EPG (Electronic Program Guide) types
+export interface EPGProgram {
+  channelId: string;
+  title: string;
+  description?: string;
+  start: string; // ISO 8601 datetime
+  stop: string; // ISO 8601 datetime
+  icon?: string;
+  categories?: string[];
+  episode?: string; // e.g., "S01E05"
+  rating?: string;
+}
+
+export interface EPGNowPlaying {
+  channelId: string;
+  current?: EPGProgram;
+  next?: EPGProgram;
+}
+
+export interface EPGStatus {
+  enabled: boolean;
+  lastRefresh?: string;
+  lastError?: string;
+  channelCount: number;
+  programCount: number;
+  refreshing: boolean;
+  sourceCount: number;
+}
+
+// Response from GET /live/epg/now (array of EPGNowPlaying)
+export type EPGNowPlayingResponse = EPGNowPlaying[];
+
 // Category info with channel count
 export interface CategoryInfo {
   name: string;
@@ -1530,6 +1562,26 @@ class ApiService {
 
   async getLiveCategories(): Promise<CategoriesResponse> {
     return this.request<CategoriesResponse>('/live/categories');
+  }
+
+  // EPG (Electronic Program Guide) methods
+  async getEPGStatus(): Promise<EPGStatus> {
+    return this.request<EPGStatus>('/live/epg/status');
+  }
+
+  async getEPGNowPlaying(channelIds: string[], signal?: AbortSignal): Promise<EPGNowPlayingResponse> {
+    if (channelIds.length === 0) {
+      return [];
+    }
+    const params = new URLSearchParams();
+    params.set('channels', channelIds.join(','));
+    return this.request<EPGNowPlayingResponse>(`/live/epg/now?${params.toString()}`, { signal });
+  }
+
+  async refreshEPG(): Promise<{ status: string }> {
+    return this.request<{ status: string }>('/live/epg/refresh', {
+      method: 'POST',
+    });
   }
 
   async searchIndexer(

@@ -23,6 +23,7 @@ export interface PlayerParams extends Record<string, any> {
   debugLogs?: string;
   preferSystemPlayer?: string;
   mediaType?: string;
+  tvgId?: string; // EPG channel ID for live TV
   year?: string;
   seasonNumber?: string;
   episodeNumber?: string;

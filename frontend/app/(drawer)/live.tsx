@@ -45,6 +45,8 @@ import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useLiveChannels, type LiveChannel } from '@/hooks/useLiveChannels';
+import { useChannelEPG, type EPGDataMap } from '@/hooks/useChannelEPG';
+import { EPGInlineDisplay, EPGGridOverlay } from '@/components/EPGNowPlaying';
 import apiService from '@/services/api';
 
 // Spatial navigation header button for TV - matches TVActionButton styling
@@ -148,6 +150,8 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
     const styles = useMemo(() => createStyles(theme), [theme]);
     const isTV = Platform.isTV;
     const _channelKey = `live-channel-${channel.id}`;
+    const epgData = React.useContext(EPGDataContext);
+    const epg = channel.tvgId ? epgData.get(channel.tvgId) : undefined;
 
     const borderFlashAnim = useRef(new Animated.Value(0)).current;
     const starFlashAnim = useRef(new Animated.Value(1)).current;
@@ -233,9 +237,13 @@ const ChannelCard: React.FC<ChannelCardProps> = React.memo(
         <View style={styles.channelMeta}>
           <Text style={[styles.channelName, isFocused && styles.channelNameFocused]}>{channel.name}</Text>
           {channel.group ? <Text style={styles.channelGroup}>{channel.group}</Text> : null}
-          <Text style={styles.channelUrl} numberOfLines={1}>
-            {channel.url}
-          </Text>
+          {epg?.current ? (
+            <EPGInlineDisplay data={epg} textColor={theme.colors.text.muted} />
+          ) : (
+            <Text style={styles.channelUrl} numberOfLines={1}>
+              {channel.url}
+            </Text>
+          )}
           {isTV ? <Text style={styles.channelHint}>Long press for options</Text> : null}
         </View>
         <View style={styles.channelActions}>
@@ -369,6 +377,8 @@ const TabletChannelGridCard = React.memo(function TabletChannelGridCard({
   onToggleFavorite: (channel: LiveChannel) => void;
 }) {
   const theme = useTheme();
+  const epgData = React.useContext(EPGDataContext);
+  const epg = channel.tvgId ? epgData.get(channel.tvgId) : undefined;
 
   const handlePress = useCallback(() => {
     onSelect(channel);
@@ -443,9 +453,10 @@ const TabletChannelGridCard = React.memo(function TabletChannelGridCard({
           style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%' }}
         />
         <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 10 }}>
-          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }} numberOfLines={2}>
+          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }} numberOfLines={epg?.current ? 1 : 2}>
             {channel.name}
           </Text>
+          <EPGGridOverlay data={epg} />
         </View>
       </View>
     </Pressable>
@@ -461,6 +472,9 @@ interface TVGridHandlers {
 
 const TVGridHandlersContext = React.createContext<TVGridHandlers | null>(null);
 
+// EPG data context for channel cards - avoids passing epgData through every prop
+const EPGDataContext = React.createContext<EPGDataMap>(new Map());
+
 const TVChannelGridCard = React.memo(
   function TVChannelGridCard({
     channel,
@@ -474,6 +488,8 @@ const TVChannelGridCard = React.memo(
     cardWidth: number;
   }) {
     const handlers = React.useContext(TVGridHandlersContext);
+    const epgData = React.useContext(EPGDataContext);
+    const epg = channel.tvgId ? epgData.get(channel.tvgId) : undefined;
 
     const handleSelect = useCallback(() => {
       handlers?.onSelect(channel.id);
@@ -517,9 +533,10 @@ const TVChannelGridCard = React.memo(
                 style={tvGridCardStyles.gradient}
               />
               <View style={tvGridCardStyles.textContainer}>
-                <Text style={tvGridCardStyles.text} numberOfLines={2}>
+                <Text style={tvGridCardStyles.text} numberOfLines={epg?.current ? 1 : 2}>
                   {channel.name}
                 </Text>
+                <EPGGridOverlay data={epg} />
               </View>
             </View>
           </View>
@@ -531,6 +548,7 @@ const TVChannelGridCard = React.memo(
     prevProps.channel.id === nextProps.channel.id &&
     prevProps.channel.logo === nextProps.channel.logo &&
     prevProps.channel.name === nextProps.channel.name &&
+    prevProps.channel.tvgId === nextProps.channel.tvgId &&
     prevProps.isFavorite === nextProps.isFavorite &&
     prevProps.rowIndex === nextProps.rowIndex &&
     prevProps.cardWidth === nextProps.cardWidth,
@@ -550,6 +568,7 @@ function LiveScreen() {
     favorites,
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
+  const { epgData, fetchEPGForChannels, isEnabled: isEPGEnabled } = useChannelEPG();
   const {
     hasSavedSession,
     isSelectionMode,
@@ -642,6 +661,20 @@ function LiveScreen() {
       isFilterActive,
     });
   }, [isActive, isFocused, isMenuOpen, isCategoryModalVisible, isActionModalVisible, isFilterActive]);
+
+  // Fetch EPG data when channels are loaded
+  useEffect(() => {
+    if (!isEPGEnabled || channels.length === 0) {
+      return;
+    }
+    // Extract tvgIds from channels that have them
+    const tvgIds = channels.filter((ch) => ch.tvgId).map((ch) => ch.tvgId!);
+    if (tvgIds.length > 0) {
+      console.log('[live] Fetching EPG for', tvgIds.length, 'channels');
+      void fetchEPGForChannels(tvgIds);
+    }
+  }, [channels, isEPGEnabled, fetchEPGForChannels]);
+
   const filterInputRef = useRef<TextInput>(null);
   const tempFilterRef = useRef('');
   const scrollViewRef = useRef<RNScrollView | null>(null);
@@ -854,6 +887,7 @@ function LiveScreen() {
             title: channel.name ?? 'Live Channel',
             mediaType: 'channel',
             preferSystemPlayer: '1',
+            tvgId: channel.tvgId ?? '',
           },
         });
       } catch (error) {
@@ -1680,7 +1714,7 @@ function LiveScreen() {
   );
 
   const pageContent = (
-    <>
+    <EPGDataContext.Provider value={epgData}>
       <Stack.Screen options={{ headerShown: false }} />
       <FixedSafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.container}>
@@ -2006,7 +2040,7 @@ function LiveScreen() {
         onSelectAll={handleSelectAllCategories}
         onClearAll={handleClearAllCategories}
       />
-    </>
+    </EPGDataContext.Provider>
   );
 
   // Selection Confirmation Modal - rendered outside SpatialNavigationRoot for native focus

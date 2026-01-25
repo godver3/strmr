@@ -28,6 +28,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, AppState, BackHandler, Image, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useTVDimensions } from '@/hooks/useTVDimensions';
+import { useChannelEPG } from '@/hooks/useChannelEPG';
 import { isTablet } from '@/theme/tokens/tvScale';
 
 // TVMenuControl is available on tvOS but not typed in RN types
@@ -138,6 +139,7 @@ export default function PlayerScreen() {
     preselectedSubtitleTrack: preselectedSubtitleTrackParam,
     passthroughName: passthroughNameParam,
     passthroughDescription: passthroughDescriptionParam,
+    tvgId: tvgIdParam,
   } = useLocalSearchParams<PlayerParams>();
   const resolvedMovie = useMemo(() => {
     const movieParam = Array.isArray(movie) ? movie[0] : movie;
@@ -283,6 +285,25 @@ export default function PlayerScreen() {
 
   const shouldPreferSystemPlayer = useMemo(() => parseBooleanParam(preferSystemPlayerParam), [preferSystemPlayerParam]);
   const isLiveTV = useMemo(() => shouldPreferSystemPlayer, [shouldPreferSystemPlayer]);
+
+  // Parse tvgId for EPG lookup (live TV only)
+  const tvgId = useMemo(() => {
+    const raw = Array.isArray(tvgIdParam) ? tvgIdParam[0] : tvgIdParam;
+    return raw?.trim() || undefined;
+  }, [tvgIdParam]);
+
+  // Fetch EPG data for live TV channels
+  const { getProgram, fetchEPGForChannels, isEnabled: isEPGEnabled } = useChannelEPG();
+  const epgData = useMemo(() => (tvgId ? getProgram(tvgId) : undefined), [tvgId, getProgram]);
+  const currentProgram = epgData?.current;
+  const nextProgram = epgData?.next;
+
+  // Fetch EPG when player loads with a tvgId
+  useEffect(() => {
+    if (isLiveTV && tvgId && isEPGEnabled) {
+      void fetchEPGForChannels([tvgId]);
+    }
+  }, [isLiveTV, tvgId, isEPGEnabled, fetchEPGForChannels]);
 
   // Parse media info parameters
   const mediaType = useMemo(() => {
@@ -5665,6 +5686,8 @@ export default function PlayerScreen() {
                             seekForwardSeconds={seekForwardSeconds}
                             shuffleMode={shuffleMode}
                             onEnterPip={handleEnterPip}
+                            currentProgram={currentProgram}
+                            nextProgram={nextProgram}
                           />
                         </View>
                       </View>
@@ -5776,6 +5799,8 @@ export default function PlayerScreen() {
                         shuffleMode={shuffleMode}
                         onEnterPip={handleEnterPip}
                         flashSkipButton={flashSkipButton}
+                        currentProgram={currentProgram}
+                        nextProgram={nextProgram}
                       />
                     </View>
                   </View>
