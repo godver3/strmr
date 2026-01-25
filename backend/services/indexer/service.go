@@ -408,11 +408,15 @@ type SearchOptions struct {
 	TotalSeriesEpisodes   int                         // Deprecated: use EpisodeResolver instead
 	EpisodeResolver       filter.EpisodeCountResolver // Optional: resolver for accurate episode counts from metadata
 	AbsoluteEpisodeNumber int                         // Optional: absolute episode number for anime (e.g., 1153 for One Piece)
+	IsAnime               bool                        // True for anime content - requires waiting for Nyaa scraper
 	IsDaily               bool                        // True for daily shows (talk shows, news) that use date-based naming
 	TargetAirDate         string                      // For daily shows: air date in YYYY-MM-DD format
 }
 
 func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBResult, error) {
+	searchStart := time.Now()
+	log.Printf("[indexer] TIMING: Search started for query=%q mediaType=%q", opts.Query, opts.MediaType)
+
 	if s.cfg == nil {
 		return nil, errors.New("config manager not configured")
 	}
@@ -451,7 +455,9 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			usenetStart := time.Now()
 			usenetResults, err := s.searchUsenetWithFilter(ctx, settings, opts, parsedQuery, alternateTitles, searchQueries, filterSettings)
+			log.Printf("[indexer] TIMING: usenet search complete (took: %v, results: %d)", time.Since(usenetStart), len(usenetResults))
 			if err != nil {
 				resultsChan <- searchResult{err: err, source: "usenet"}
 				return
@@ -470,12 +476,13 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			debridStart := time.Now()
 			if s.debrid == nil {
 				resultsChan <- searchResult{err: fmt.Errorf("debrid search service not configured"), source: "debrid"}
 				return
 			}
 			hasResolver := opts.EpisodeResolver != nil
-			log.Printf("[indexer] Calling debrid search with Query=%q, IMDBID=%q, MediaType=%q, Year=%d, UserID=%q, ClientID=%q, hasEpisodeResolver=%v", opts.Query, opts.IMDBID, opts.MediaType, opts.Year, opts.UserID, opts.ClientID, hasResolver)
+			log.Printf("[indexer] TIMING: debrid search starting (query=%q, hasEpisodeResolver=%v)", opts.Query, hasResolver)
 			debOpts := debrid.SearchOptions{
 				Query:                 opts.Query,
 				Categories:            append([]string{}, opts.Categories...),
@@ -489,10 +496,12 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 				TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
 				EpisodeResolver:       opts.EpisodeResolver,
 				AbsoluteEpisodeNumber: opts.AbsoluteEpisodeNumber,
+				IsAnime:               opts.IsAnime,
 				IsDaily:               opts.IsDaily,
 				TargetAirDate:         opts.TargetAirDate,
 			}
 			debridResults, err := s.debrid.Search(ctx, debOpts)
+			log.Printf("[indexer] TIMING: debrid search complete (took: %v, results: %d)", time.Since(debridStart), len(debridResults))
 			if err != nil {
 				resultsChan <- searchResult{err: err, source: "debrid"}
 				return
@@ -606,7 +615,160 @@ func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]models.NZBR
 		log.Printf("[indexer] Added daily show attributes to %d results: isDaily=%v, airDate=%q", len(aggregated), opts.IsDaily, opts.TargetAirDate)
 	}
 
+	log.Printf("[indexer] TIMING: Search complete, returning %d results (TOTAL: %v)", len(aggregated), time.Since(searchStart))
 	return aggregated, nil
+}
+
+// SplitSearchResult holds results from either debrid or usenet search
+type SplitSearchResult struct {
+	Results []models.NZBResult
+	Source  string // "debrid" or "usenet"
+	Err     error
+}
+
+// SearchSplit runs debrid and usenet searches in parallel and returns results via separate channels.
+// This allows the caller to process debrid results immediately while usenet search continues.
+// The caller is responsible for draining both channels to avoid goroutine leaks.
+func (s *Service) SearchSplit(ctx context.Context, opts SearchOptions) (debridChan <-chan SplitSearchResult, usenetChan <-chan SplitSearchResult) {
+	debridOut := make(chan SplitSearchResult, 1)
+	usenetOut := make(chan SplitSearchResult, 1)
+
+	settings, err := s.cfg.Load()
+	if err != nil {
+		debridOut <- SplitSearchResult{Err: fmt.Errorf("load settings: %w", err), Source: "debrid"}
+		usenetOut <- SplitSearchResult{Err: fmt.Errorf("load settings: %w", err), Source: "usenet"}
+		close(debridOut)
+		close(usenetOut)
+		return debridOut, usenetOut
+	}
+
+	filterSettings := s.getEffectiveFilterSettings(opts.UserID, opts.ClientID, settings)
+	alternateTitles := s.resolveAlternateTitles(ctx, opts)
+	parsedQuery := debrid.ParseQuery(opts.Query)
+	searchQueries := buildSearchQueries(opts, parsedQuery, alternateTitles)
+
+	includeUsenet := shouldUseUsenet(settings.Streaming.ServiceMode)
+	includeDebrid := shouldUseDebrid(settings.Streaming.ServiceMode)
+
+	// Prepare ranking criteria and settings for sorting (same as main Search function)
+	rankingCriteria := s.getEffectiveRankingCriteria(opts.UserID, opts.ClientID, settings)
+	servicePriority := settings.Streaming.ServicePriority
+	preferredTerms := filterSettings.PreferredTerms
+	prioritizeHdr := models.BoolVal(filterSettings.PrioritizeHdr, false)
+	preferredLang := settings.Metadata.Language
+
+	// Helper to apply ranking sort to results
+	applyRanking := func(results []models.NZBResult) {
+		if len(results) == 0 {
+			return
+		}
+		sort.SliceStable(results, func(i, j int) bool {
+			for _, criterion := range rankingCriteria {
+				if !criterion.Enabled {
+					continue
+				}
+				var result int
+				switch criterion.ID {
+				case config.RankingServicePriority:
+					result = compareServicePriority(results[i], results[j], servicePriority)
+				case config.RankingPreferredTerms:
+					result = comparePreferredTerms(results[i], results[j], preferredTerms)
+				case config.RankingResolution:
+					result = compareResolution(results[i], results[j])
+				case config.RankingHDR:
+					result = compareHDR(results[i], results[j], prioritizeHdr)
+				case config.RankingLanguage:
+					result = compareLanguage(results[i], results[j], preferredLang)
+				case config.RankingSize:
+					result = compareSize(results[i], results[j])
+				}
+				if result != 0 {
+					return result < 0
+				}
+			}
+			return false
+		})
+	}
+
+	// Launch debrid search
+	go func() {
+		defer close(debridOut)
+		if !includeDebrid || s.debrid == nil {
+			return
+		}
+
+		debridStart := time.Now()
+		log.Printf("[indexer] TIMING: split debrid search starting (query=%q)", opts.Query)
+
+		debOpts := debrid.SearchOptions{
+			Query:                 opts.Query,
+			Categories:            append([]string{}, opts.Categories...),
+			MaxResults:            opts.MaxResults,
+			IMDBID:                opts.IMDBID,
+			MediaType:             opts.MediaType,
+			Year:                  opts.Year,
+			AlternateTitles:       append([]string{}, alternateTitles...),
+			UserID:                opts.UserID,
+			ClientID:              opts.ClientID,
+			TotalSeriesEpisodes:   opts.TotalSeriesEpisodes,
+			EpisodeResolver:       opts.EpisodeResolver,
+			AbsoluteEpisodeNumber: opts.AbsoluteEpisodeNumber,
+			IsAnime:               opts.IsAnime,
+			IsDaily:               opts.IsDaily,
+			TargetAirDate:         opts.TargetAirDate,
+		}
+
+		debridResults, err := s.debrid.Search(ctx, debOpts)
+		if err != nil {
+			log.Printf("[indexer] TIMING: split debrid search failed after %v: %v", time.Since(debridStart), err)
+			debridOut <- SplitSearchResult{Err: err, Source: "debrid"}
+			return
+		}
+
+		for i := range debridResults {
+			if debridResults[i].ServiceType == models.ServiceTypeUnknown {
+				debridResults[i].ServiceType = models.ServiceTypeDebrid
+			}
+		}
+
+		// Apply ranking sort so prequeue gets results in the same order as manual search
+		applyRanking(debridResults)
+
+		log.Printf("[indexer] TIMING: split debrid search complete (took: %v, results: %d)", time.Since(debridStart), len(debridResults))
+		debridOut <- SplitSearchResult{Results: debridResults, Source: "debrid"}
+	}()
+
+	// Launch usenet search
+	go func() {
+		defer close(usenetOut)
+		if !includeUsenet {
+			return
+		}
+
+		usenetStart := time.Now()
+		log.Printf("[indexer] TIMING: split usenet search starting (query=%q)", opts.Query)
+
+		usenetResults, err := s.searchUsenetWithFilter(ctx, settings, opts, parsedQuery, alternateTitles, searchQueries, filterSettings)
+		if err != nil {
+			log.Printf("[indexer] TIMING: split usenet search failed after %v: %v", time.Since(usenetStart), err)
+			usenetOut <- SplitSearchResult{Err: err, Source: "usenet"}
+			return
+		}
+
+		for i := range usenetResults {
+			if usenetResults[i].ServiceType == models.ServiceTypeUnknown {
+				usenetResults[i].ServiceType = models.ServiceTypeUsenet
+			}
+		}
+
+		// Apply ranking sort so prequeue gets results in the same order as manual search
+		applyRanking(usenetResults)
+
+		log.Printf("[indexer] TIMING: split usenet search complete (took: %v, results: %d)", time.Since(usenetStart), len(usenetResults))
+		usenetOut <- SplitSearchResult{Results: usenetResults, Source: "usenet"}
+	}()
+
+	return debridOut, usenetOut
 }
 
 func (s *Service) resolveAlternateTitles(ctx context.Context, opts SearchOptions) []string {

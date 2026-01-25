@@ -87,6 +87,10 @@ type VideoHandler struct {
 	// Prevents repeated ffprobe calls during playback
 	metadataCacheMu sync.RWMutex
 	metadataCache   map[string]*cachedMetadataEntry
+
+	// In-flight probe deduplication: prevents parallel ffprobe calls for the same path
+	// Key: path, Value: channel that closes when probe completes
+	probeInFlight sync.Map
 }
 
 // UserSettingsProvider interface for accessing user settings
@@ -1016,6 +1020,35 @@ func (h *VideoHandler) ProbeVideo(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(cachedResp)
 		return
 	}
+
+	// Deduplicate in-flight probes: if another request is already probing this path, wait for it
+	doneChan := make(chan struct{})
+	if existing, loaded := h.probeInFlight.LoadOrStore(cleanPath, doneChan); loaded {
+		// Another probe is in progress - wait for it to complete
+		log.Printf("[video] ProbeVideo: waiting for in-flight probe for path=%q", cleanPath)
+		existingChan := existing.(chan struct{})
+		select {
+		case <-existingChan:
+			// Probe completed, result should now be in cache
+			if cachedResp := h.getCachedMetadata(cleanPath); cachedResp != nil {
+				log.Printf("[video] ProbeVideo: using result from completed in-flight probe for path=%q", cleanPath)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(cachedResp)
+				return
+			}
+			// If not in cache (probe failed?), fall through to probe ourselves
+			log.Printf("[video] ProbeVideo: in-flight probe completed but no cache entry, will probe again for path=%q", cleanPath)
+		case <-r.Context().Done():
+			log.Printf("[video] ProbeVideo: request cancelled while waiting for in-flight probe for path=%q", cleanPath)
+			return
+		}
+	}
+
+	// We're the first request for this path - ensure cleanup when done
+	defer func() {
+		h.probeInFlight.Delete(cleanPath)
+		close(doneChan)
+	}()
 
 	// Extract profile info from query params for DV policy check
 	profileID := r.URL.Query().Get("profileId")

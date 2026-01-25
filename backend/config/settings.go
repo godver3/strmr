@@ -126,11 +126,22 @@ type StreamingSettings struct {
 	MaxCacheSizeMB              int                      `json:"maxCacheSizeMB"`
 	ServiceMode                 StreamingServiceMode     `json:"serviceMode"`
 	ServicePriority             StreamingServicePriority `json:"servicePriority"`                 // Priority for service type in search results
+	SearchMode                  SearchMode               `json:"searchMode"`                      // Fast (early return) vs Accurate (wait for all results)
 	DebridProviders             []DebridProviderSettings `json:"debridProviders,omitempty"`
 	MultiProviderMode           MultiProviderMode        `json:"multiProviderMode,omitempty"`     // How to select provider when multiple are enabled
 	UsenetResolutionTimeoutSec  int                      `json:"usenetResolutionTimeoutSec"`      // Timeout for usenet content resolution in seconds (0 = no limit)
 	IndexerTimeoutSec           int                      `json:"indexerTimeoutSec"`               // Timeout for indexer/scraper searches in seconds (default: 5)
 }
+
+// SearchMode determines how scraper/indexer results are aggregated
+type SearchMode string
+
+const (
+	// SearchModeFast returns results as soon as enough are available (early return)
+	SearchModeFast SearchMode = "fast"
+	// SearchModeAccurate waits for all scrapers/indexers to complete before returning
+	SearchModeAccurate SearchMode = "accurate"
+)
 
 type StreamingServicePriority string
 
@@ -584,7 +595,7 @@ func DefaultSettings() Settings {
 		Cache:     CacheSettings{Directory: "cache", MetadataTTLHours: 24},
 		WebDAV:    WebDAVSettings{Enabled: true, Prefix: "/webdav", Username: "novastream", Password: ""},
 		Database:  DatabaseSettings{Path: "cache/queue.db"},
-		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, ServicePriority: StreamingServicePriorityNone, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5},
+		Streaming: StreamingSettings{MaxDownloadWorkers: 15, MaxCacheSizeMB: 100, ServiceMode: StreamingServiceModeUsenet, ServicePriority: StreamingServicePriorityNone, SearchMode: SearchModeFast, DebridProviders: []DebridProviderSettings{}, UsenetResolutionTimeoutSec: 0, IndexerTimeoutSec: 5},
 		Import:    ImportSettings{QueueProcessingIntervalSeconds: 1, RarMaxWorkers: 40, RarMaxCacheSizeMB: 128, RarEnableMemoryPreload: true, RarMaxMemoryGB: 8},
 		SABnzbd:   SABnzbdSettings{Enabled: &sabnzbdEnabled, FallbackHost: "", FallbackAPIKey: ""},
 		AltMount:  nil,
@@ -870,6 +881,10 @@ func (m *Manager) Load() (Settings, error) {
 	// Backfill ServicePriority if not set
 	if s.Streaming.ServicePriority == "" {
 		s.Streaming.ServicePriority = StreamingServicePriorityNone
+	}
+	// Backfill SearchMode if not set (default to fast for best UX)
+	if s.Streaming.SearchMode == "" {
+		s.Streaming.SearchMode = SearchModeFast
 	}
 	if len(s.Streaming.DebridProviders) == 0 {
 		s.Streaming.DebridProviders = []DebridProviderSettings{

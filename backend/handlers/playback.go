@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/mux"
 	"novastream/models"
@@ -55,15 +56,18 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[playback-handler] Received resolve request: Title=%q, GUID=%q, ServiceType=%q, titleId=%q, titleName=%q, startOffset=%.2f",
+	handlerStart := time.Now()
+	log.Printf("[playback-handler] TIMING: Received resolve request: Title=%q, GUID=%q, ServiceType=%q, titleId=%q, titleName=%q, startOffset=%.2f",
 		request.Result.Title, request.Result.GUID, request.Result.ServiceType,
 		request.Result.Attributes["titleId"], request.Result.Attributes["titleName"], request.StartOffset)
 
 	resolution, err := h.Service.Resolve(r.Context(), request.Result)
 	if err != nil {
+		log.Printf("[playback-handler] TIMING: resolve failed after %v: %v", time.Since(handlerStart), err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	log.Printf("[playback-handler] TIMING: resolve complete (took: %v)", time.Since(handlerStart))
 
 	// Pre-extract subtitles for direct streaming (non-HLS) path
 	if h.SubtitleExtractor != nil && h.VideoProber != nil && resolution.WebDAVPath != "" {
@@ -92,6 +96,7 @@ func (h *PlaybackHandler) Resolve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	log.Printf("[playback-handler] TIMING: handler complete (TOTAL: %v)", time.Since(handlerStart))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resolution)
 }

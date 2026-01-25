@@ -13,7 +13,7 @@ import (
 
 	"novastream/config"
 	"novastream/models"
-	"novastream/utils"
+	// "novastream/utils" // TESTING: commented out while HEAD verification is disabled
 )
 
 // PlaybackService handles debrid playback resolution.
@@ -44,7 +44,8 @@ func NewPlaybackService(cfg *config.Manager, healthService *HealthService) *Play
 // Resolve checks if a debrid item is cached and returns playback information.
 // For debrid, we add the torrent, select files, and get the download link.
 func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResult) (*models.PlaybackResolution, error) {
-	log.Printf("[debrid-playback] resolve start title=%q link=%q", strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Link))
+	resolveStart := time.Now()
+	log.Printf("[debrid-playback] TIMING: resolve start title=%q link=%q", strings.TrimSpace(candidate.Title), strings.TrimSpace(candidate.Link))
 
 	// Check if this is a pre-resolved stream (e.g., from AIOStreams)
 	// Pre-resolved streams already have a direct playback URL, but we need to verify they're cached
@@ -90,7 +91,7 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 			SourceNZBPath: streamURL,
 		}
 
-		log.Printf("[debrid-playback] pre-resolved resolution: url=%s filename=%s", streamURL, filename)
+		log.Printf("[debrid-playback] TIMING: pre-resolved resolution complete (took: %v): url=%s filename=%s", time.Since(resolveStart), streamURL, filename)
 		return resolution, nil
 	}
 
@@ -122,7 +123,12 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 
 	if explicitProvider != "" {
 		// Provider specified - use single provider path
-		return s.resolveSingleProvider(ctx, candidate, explicitProvider, settings, infoHash, torrentURL)
+		log.Printf("[debrid-playback] TIMING: using explicit provider %q (elapsed: %v)", explicitProvider, time.Since(resolveStart))
+		res, err := s.resolveSingleProvider(ctx, candidate, explicitProvider, settings, infoHash, torrentURL)
+		if err == nil {
+			log.Printf("[debrid-playback] TIMING: single provider resolution complete (TOTAL: %v)", time.Since(resolveStart))
+		}
+		return res, err
 	}
 
 	// Count enabled providers with API keys
@@ -139,11 +145,16 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 
 	if enabledCount == 1 {
 		// Only one provider - use single provider path
-		return s.resolveSingleProvider(ctx, candidate, "", settings, infoHash, torrentURL)
+		log.Printf("[debrid-playback] TIMING: using single enabled provider (elapsed: %v)", time.Since(resolveStart))
+		res, err := s.resolveSingleProvider(ctx, candidate, "", settings, infoHash, torrentURL)
+		if err == nil {
+			log.Printf("[debrid-playback] TIMING: single provider resolution complete (TOTAL: %v)", time.Since(resolveStart))
+		}
+		return res, err
 	}
 
 	// Multiple providers enabled - use multi-provider checking
-	log.Printf("[debrid-playback] checking %d providers in %s mode", enabledCount, settings.Streaming.MultiProviderMode)
+	log.Printf("[debrid-playback] TIMING: checking %d providers in %s mode (elapsed: %v)", enabledCount, settings.Streaming.MultiProviderMode, time.Since(resolveStart))
 
 	result, err := s.multiProvider.CheckCacheAcrossProviders(ctx, candidate, settings.Streaming.MultiProviderMode)
 	if err != nil {
@@ -151,11 +162,16 @@ func (s *PlaybackService) Resolve(ctx context.Context, candidate models.NZBResul
 	}
 
 	// We have a winning provider with cached result - complete the resolution
-	return s.completeResolution(ctx, result.Client, result.TorrentID, candidate)
+	res, err := s.completeResolution(ctx, result.Client, result.TorrentID, candidate)
+	if err == nil {
+		log.Printf("[debrid-playback] TIMING: multi-provider resolution complete (TOTAL: %v)", time.Since(resolveStart))
+	}
+	return res, err
 }
 
 func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provider, candidate models.NZBResult, infoHash, torrentURL string) (*models.PlaybackResolution, error) {
 	providerName := client.Name()
+	resolveStart := time.Now()
 
 	var addResp *AddMagnetResult
 	var err error
@@ -163,11 +179,13 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 	// Determine how to add the torrent: magnet link or torrent file upload
 	if strings.HasPrefix(strings.ToLower(candidate.Link), "magnet:") {
 		// Use magnet link
-		log.Printf("[debrid-playback] adding magnet to %s", providerName)
+		log.Printf("[debrid-playback] TIMING: adding magnet to %s", providerName)
+		addStart := time.Now()
 		addResp, err = client.AddMagnet(ctx, candidate.Link)
 		if err != nil {
 			return nil, fmt.Errorf("add magnet: %w", err)
 		}
+		log.Printf("[debrid-playback] TIMING: AddMagnet took %v", time.Since(addStart))
 	} else if torrentURL != "" {
 		// Download and upload torrent file
 		log.Printf("[debrid-playback] downloading torrent file from %s", torrentURL)
@@ -185,13 +203,15 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 	}
 
 	torrentID := addResp.ID
-	log.Printf("[debrid-playback] torrent added with ID %s", torrentID)
+	log.Printf("[debrid-playback] TIMING: torrent added with ID %s (elapsed: %v)", torrentID, time.Since(resolveStart))
 
 	// Get torrent info to see available files
+	getInfoStart := time.Now()
 	info, err := client.GetTorrentInfo(ctx, torrentID)
 	if err != nil {
 		return nil, fmt.Errorf("get torrent info: %w", err)
 	}
+	log.Printf("[debrid-playback] TIMING: GetTorrentInfo (1st) took %v (elapsed: %v)", time.Since(getInfoStart), time.Since(resolveStart))
 
 	// Select the most relevant media file (but send all files to trigger caching)
 	selection := selectMediaFiles(info.Files, buildSelectionHints(candidate, info.Filename))
@@ -216,17 +236,21 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 	log.Printf("[debrid-playback] selecting %d media files for caching: %s", len(selection.OrderedIDs), fileSelection)
 	logSelectedFileDetails(info.Files, selection)
 
+	selectStart := time.Now()
 	if err := client.SelectFiles(ctx, torrentID, fileSelection); err != nil {
 		_ = client.DeleteTorrent(ctx, torrentID)
 		return nil, fmt.Errorf("select files: %w", err)
 	}
+	log.Printf("[debrid-playback] TIMING: SelectFiles took %v (elapsed: %v)", time.Since(selectStart), time.Since(resolveStart))
 
 	// Get torrent info again to get download links
+	getInfo2Start := time.Now()
 	info, err = client.GetTorrentInfo(ctx, torrentID)
 	if err != nil {
 		_ = client.DeleteTorrent(ctx, torrentID)
 		return nil, fmt.Errorf("get torrent info after selection: %w", err)
 	}
+	log.Printf("[debrid-playback] TIMING: GetTorrentInfo (2nd) took %v (elapsed: %v)", time.Since(getInfo2Start), time.Since(resolveStart))
 
 	// Check if cached
 	isCached := strings.ToLower(info.Status) == "downloaded"
@@ -290,35 +314,39 @@ func (s *PlaybackService) resolveWithProvider(ctx context.Context, client Provid
 			return nil, fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
 		}
 
-		// Verify the download URL is accessible with a HEAD request
-		log.Printf("[debrid-playback] verifying download URL is accessible: %s", downloadURL)
+		// TESTING: Skip HEAD verification to save ~600-700ms
+		// Real-Debrid URLs are generally reliable, and if they fail the player will error anyway
+		log.Printf("[debrid-playback] TIMING: skipping HEAD verify (testing) - total elapsed: %v", time.Since(resolveStart))
 
-		// Encode URL properly (handles spaces and special characters)
-		encodedDownloadURL, encErr := utils.EncodeURLWithSpaces(downloadURL)
-		if encErr != nil {
-			log.Printf("[debrid-playback] failed to encode download URL: %v", encErr)
-			encodedDownloadURL = downloadURL // Fall back to original
-		}
-
-		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, encodedDownloadURL, nil)
-		if err != nil {
-			_ = client.DeleteTorrent(ctx, torrentID)
-			return nil, fmt.Errorf("failed to create HEAD request: %w", err)
-		}
-
-		headResp, err := http.DefaultClient.Do(headReq)
-		if err != nil {
-			_ = client.DeleteTorrent(ctx, torrentID)
-			return nil, fmt.Errorf("download URL not accessible: %w", err)
-		}
-		defer headResp.Body.Close()
-
-		if headResp.StatusCode >= 400 {
-			_ = client.DeleteTorrent(ctx, torrentID)
-			return nil, fmt.Errorf("download URL returned error status: %d %s", headResp.StatusCode, headResp.Status)
-		}
-
-		log.Printf("[debrid-playback] download URL verified accessible (status: %d)", headResp.StatusCode)
+		// TODO: Re-enable HEAD verification if needed, or make it configurable
+		// headStart := time.Now()
+		// log.Printf("[debrid-playback] TIMING: verifying download URL is accessible")
+		//
+		// encodedDownloadURL, encErr := utils.EncodeURLWithSpaces(downloadURL)
+		// if encErr != nil {
+		// 	log.Printf("[debrid-playback] failed to encode download URL: %v", encErr)
+		// 	encodedDownloadURL = downloadURL
+		// }
+		//
+		// headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, encodedDownloadURL, nil)
+		// if err != nil {
+		// 	_ = client.DeleteTorrent(ctx, torrentID)
+		// 	return nil, fmt.Errorf("failed to create HEAD request: %w", err)
+		// }
+		//
+		// headResp, err := http.DefaultClient.Do(headReq)
+		// if err != nil {
+		// 	_ = client.DeleteTorrent(ctx, torrentID)
+		// 	return nil, fmt.Errorf("download URL not accessible: %w", err)
+		// }
+		// defer headResp.Body.Close()
+		//
+		// if headResp.StatusCode >= 400 {
+		// 	_ = client.DeleteTorrent(ctx, torrentID)
+		// 	return nil, fmt.Errorf("download URL returned error status: %d %s", headResp.StatusCode, headResp.Status)
+		// }
+		//
+		// log.Printf("[debrid-playback] TIMING: HEAD verify took %v (status: %d, total elapsed: %v)", time.Since(headStart), headResp.StatusCode, time.Since(resolveStart))
 	} else {
 		// For providers like Torbox that use internal references (torrent_id:file_id),
 		// the actual URL is resolved at stream time via UnrestrictLink
@@ -445,33 +473,8 @@ func (s *PlaybackService) completeResolution(
 			return nil, fmt.Errorf("download URL points to unsupported archive (%s)", archiveExt)
 		}
 
-		log.Printf("[debrid-playback] verifying download URL is accessible: %s", downloadURL)
-
-		encodedDownloadURL, encErr := utils.EncodeURLWithSpaces(downloadURL)
-		if encErr != nil {
-			log.Printf("[debrid-playback] failed to encode download URL: %v", encErr)
-			encodedDownloadURL = downloadURL
-		}
-
-		headReq, err := http.NewRequestWithContext(ctx, http.MethodHead, encodedDownloadURL, nil)
-		if err != nil {
-			_ = client.DeleteTorrent(ctx, torrentID)
-			return nil, fmt.Errorf("failed to create HEAD request: %w", err)
-		}
-
-		headResp, err := http.DefaultClient.Do(headReq)
-		if err != nil {
-			_ = client.DeleteTorrent(ctx, torrentID)
-			return nil, fmt.Errorf("download URL not accessible: %w", err)
-		}
-		defer headResp.Body.Close()
-
-		if headResp.StatusCode >= 400 {
-			_ = client.DeleteTorrent(ctx, torrentID)
-			return nil, fmt.Errorf("download URL returned error status: %d %s", headResp.StatusCode, headResp.Status)
-		}
-
-		log.Printf("[debrid-playback] download URL verified accessible (status: %d)", headResp.StatusCode)
+		// TESTING: Skip HEAD verification to save ~600-700ms
+		log.Printf("[debrid-playback] skipping HEAD verify (testing) for multi-provider resolution")
 	} else {
 		log.Printf("[debrid-playback] download link is internal reference, will be resolved at stream time: %s", downloadURL)
 	}

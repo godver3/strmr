@@ -243,6 +243,12 @@ var SettingsSchema = map[string]interface{}{
 				"description": "Prioritize results from a specific service type",
 				"options":     []string{"none", "usenet", "debrid"},
 			},
+			"searchMode": map[string]interface{}{
+				"type":        "select",
+				"label":       "Search Mode",
+				"description": "Fast returns results quickly (early return), Accurate waits for all scrapers/indexers",
+				"options":     []string{"fast", "accurate"},
+			},
 			"multiProviderMode": map[string]interface{}{
 				"type":        "select",
 				"label":       "Multi-Provider Mode",

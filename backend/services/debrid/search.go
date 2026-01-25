@@ -44,6 +44,7 @@ type SearchOptions struct {
 	TotalSeriesEpisodes   int                         // Deprecated: use EpisodeResolver instead
 	EpisodeResolver       filter.EpisodeCountResolver // Optional: resolver for accurate episode counts from metadata
 	AbsoluteEpisodeNumber int                         // Optional: absolute episode number for anime (e.g., 1153 for One Piece)
+	IsAnime               bool                        // True for anime content - requires waiting for Nyaa scraper
 	IsDaily               bool                        // True for daily shows (talk shows, news) - enables date-based matching
 	TargetAirDate         string                      // For daily shows: air date in YYYY-MM-DD format
 }
@@ -337,11 +338,13 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 	// Run all scrapers in parallel
 	var wg sync.WaitGroup
 	resultsChan := make(chan scraperResult, len(s.scrapers))
+	scraperCount := 0
 
 	for _, scraper := range s.scrapers {
 		if scraper == nil {
 			continue
 		}
+		scraperCount++
 		wg.Add(1)
 		go func(sc Scraper) {
 			defer wg.Done()
@@ -362,18 +365,28 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 		close(resultsChan)
 	}()
 
-	// Collect results from all scrapers
+	// Collect results from scrapers
+	// For non-anime: use early return after fast scrapers finish (500ms timeout or 20+ results)
+	// For anime: wait for all scrapers (need Nyaa results)
 	var (
-		aggregate []models.NZBResult
-		errs      []error
-		seenGuids = make(map[string]struct{})
+		aggregate     []models.NZBResult
+		errs          []error
+		seenGuids     = make(map[string]struct{})
+		scrapersRecvd = 0
 	)
 
-	for sr := range resultsChan {
+	// Early return settings for non-anime content
+	const (
+		earlyReturnMinResults = 20  // Return early if we have this many results
+		earlyReturnTimeout    = 500 * time.Millisecond // Max wait for fast scrapers
+	)
+
+	// Helper to process scraper results
+	processScraperResult := func(sr scraperResult) {
 		if sr.err != nil {
 			log.Printf("[debrid] %s search failed: %v", sr.name, sr.err)
 			errs = append(errs, fmt.Errorf("%s scraper: %w", sr.name, sr.err))
-			continue
+			return
 		}
 		log.Printf("[debrid] %s search produced %d results for %q in %s", sr.name, len(sr.results), parsed.Title, sr.elapsed.Round(10*time.Millisecond))
 		for _, res := range sr.results {
@@ -397,6 +410,72 @@ func (s *SearchService) Search(ctx context.Context, opts SearchOptions) ([]model
 			}
 			seenGuids[nzb.GUID] = struct{}{}
 			aggregate = append(aggregate, nzb)
+		}
+	}
+
+	// Determine if we should wait for all results (accurate mode) or use early return (fast mode)
+	useAccurateMode := settings.Streaming.SearchMode == config.SearchModeAccurate
+
+	if useAccurateMode || opts.IsAnime {
+		// Accurate mode or Anime: wait for all scrapers
+		if useAccurateMode {
+			log.Printf("[debrid] TIMING: accurate mode - waiting for all %d scrapers", scraperCount)
+		} else {
+			log.Printf("[debrid] TIMING: anime content - waiting for all %d scrapers", scraperCount)
+		}
+		for sr := range resultsChan {
+			processScraperResult(sr)
+		}
+	} else {
+		// Fast mode (non-anime): early return when we have enough results from fast scrapers
+		earlyReturnTimer := time.NewTimer(earlyReturnTimeout)
+		defer earlyReturnTimer.Stop()
+
+	collectLoop:
+		for {
+			select {
+			case sr, ok := <-resultsChan:
+				if !ok {
+					// Channel closed, all scrapers done
+					break collectLoop
+				}
+				scrapersRecvd++
+				processScraperResult(sr)
+
+				// Check if we have enough results to return early
+				if len(aggregate) >= earlyReturnMinResults && scrapersRecvd < scraperCount {
+					log.Printf("[debrid] TIMING: early return with %d results from %d/%d scrapers (have enough results)",
+						len(aggregate), scrapersRecvd, scraperCount)
+					break collectLoop
+				}
+
+			case <-earlyReturnTimer.C:
+				// Timeout: return what we have if we got any results
+				if len(aggregate) > 0 && scrapersRecvd < scraperCount {
+					log.Printf("[debrid] TIMING: early return with %d results from %d/%d scrapers (timeout after %v)",
+						len(aggregate), scrapersRecvd, scraperCount, earlyReturnTimeout)
+					break collectLoop
+				}
+				// No results yet, keep waiting
+			}
+		}
+
+		// Drain any remaining results that arrived (non-blocking)
+	drainLoop:
+		for {
+			select {
+			case sr, ok := <-resultsChan:
+				if !ok {
+					break drainLoop
+				}
+				// Log but don't process late results to avoid blocking
+				if sr.err == nil {
+					log.Printf("[debrid] TIMING: late result from %s (%d results) - already returned early", sr.name, len(sr.results))
+				}
+			default:
+				// No more results waiting
+				break drainLoop
+			}
 		}
 	}
 
