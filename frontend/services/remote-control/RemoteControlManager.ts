@@ -17,6 +17,12 @@ const PAN_GRID_COLUMNS = 5; // Number of columns in the grid (more = more sensit
 const PAN_EMIT_INTERVAL = 30; // ms between emitting consecutive key events
 const PAN_THROTTLE_DELAY = 30; // ms throttle for pan event processing
 
+// Key hold acceleration constants
+const ACCEL_START_DELAY = 400; // ms before acceleration kicks in
+const ACCEL_BASE_INTERVAL = 80; // ms between acceleration checks
+const ACCEL_MAX_MULTIPLIER = 5; // max events to emit at once
+const ACCEL_RAMP_EVENTS = 8; // number of events to reach max multiplier
+
 import { BackInterceptor, RemoteControlManagerInterface } from './RemoteControlManager.interface';
 import { SupportedKeys } from './SupportedKeys';
 
@@ -139,6 +145,11 @@ class RemoteControlManager implements RemoteControlManagerInterface {
   private panOrientation: 'x' | 'y' | undefined = undefined;
   private panLastIndex = 0;
   private panThrottleWait = false;
+
+  // Key hold acceleration state
+  private accelKey?: SupportedKeys;
+  private accelStartTime = 0;
+  private accelEventCount = 0;
 
   constructor() {
     if (isTvEnvironment()) {
@@ -396,14 +407,84 @@ class RemoteControlManager implements RemoteControlManagerInterface {
     return false;
   };
 
+  private isDirectionalKey = (key: SupportedKeys): boolean => {
+    return key === SupportedKeys.Up || key === SupportedKeys.Down ||
+           key === SupportedKeys.Left || key === SupportedKeys.Right;
+  };
+
   private shouldEmit = (key: SupportedKeys): boolean => {
     const now = Date.now();
 
-    // Dedup window: 50ms for directions and select, skip dedup for Back button
+    // Skip deduplication for Back button to ensure all back presses are handled
+    if (key === SupportedKeys.Back) {
+      this.accelKey = undefined; // Reset acceleration on non-directional key
+      this.lastEmittedKey = key;
+      this.lastEmittedAt = now;
+      return true;
+    }
+
+    // For directional keys, implement acceleration when held
+    if (this.isDirectionalKey(key)) {
+      const timeSinceLastEmit = now - this.lastEmittedAt;
+      const isSameKey = this.lastEmittedKey === key;
+      const isHeld = isSameKey && timeSinceLastEmit < 200; // Consider "held" if within 200ms
+
+      if (isHeld && this.accelKey === key) {
+        // Key is being held - check dedup
+        if (timeSinceLastEmit < ACCEL_BASE_INTERVAL) {
+          return false;
+        }
+
+        const holdDuration = now - this.accelStartTime;
+
+        if (holdDuration < ACCEL_START_DELAY) {
+          // Before acceleration kicks in, emit single event
+          console.log(`[Accel] ${key} - pre-accel, holdDuration=${holdDuration}ms`);
+          this.lastEmittedKey = key;
+          this.lastEmittedAt = now;
+          return true;
+        } else {
+          // Acceleration active - emit multiple events
+          this.accelEventCount++;
+          const progress = Math.min(this.accelEventCount / ACCEL_RAMP_EVENTS, 1);
+          const multiplier = Math.round(1 + progress * (ACCEL_MAX_MULTIPLIER - 1));
+
+          console.log(`[Accel] ${key} - ACCELERATING! count=${this.accelEventCount}, multiplier=${multiplier}x, progress=${Math.round(progress * 100)}%`);
+
+          // Emit extra events (multiplier - 1 extra, since we return true for the first one)
+          for (let i = 1; i < multiplier; i++) {
+            setTimeout(() => {
+              this.eventEmitter.emit('keyDown', key);
+            }, i * 10); // Small stagger to allow focus updates
+          }
+
+          this.lastEmittedKey = key;
+          this.lastEmittedAt = now;
+          return true;
+        }
+      } else {
+        // New key or key changed - reset acceleration
+        this.accelKey = key;
+        this.accelStartTime = now;
+        this.accelEventCount = 0;
+        console.log(`[Accel] ${key} - NEW press, resetting acceleration`);
+
+        // Apply normal dedup for first press
+        if (isSameKey && timeSinceLastEmit < 50) {
+          return false;
+        }
+      }
+
+      this.lastEmittedKey = key;
+      this.lastEmittedAt = now;
+      return true;
+    }
+
+    // Non-directional, non-back keys: reset acceleration and use normal dedup
+    this.accelKey = undefined;
     const dedupWindow = 50;
 
-    // Skip deduplication for Back button to ensure all back presses are handled
-    if (key !== SupportedKeys.Back && this.lastEmittedKey === key && now - this.lastEmittedAt < dedupWindow) {
+    if (this.lastEmittedKey === key && now - this.lastEmittedAt < dedupWindow) {
       return false;
     }
 

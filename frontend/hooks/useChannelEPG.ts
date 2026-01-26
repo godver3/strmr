@@ -22,6 +22,7 @@ interface UseChannelEPGResult {
   fetchEPGForChannels: (channelIds: string[]) => Promise<void>;
   getProgram: (channelId: string) => EPGNowPlaying | undefined;
   isEnabled: boolean;
+  isStatusLoaded: boolean;
 }
 
 /**
@@ -44,6 +45,7 @@ interface UseChannelEPGResult {
 export const useChannelEPG = (): UseChannelEPGResult => {
   const [epgData, setEpgData] = useState<EPGDataMap>(new Map());
   const [epgStatus, setEpgStatus] = useState<EPGStatus | null>(null);
+  const [isStatusLoaded, setIsStatusLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +62,7 @@ export const useChannelEPG = (): UseChannelEPGResult => {
         const status = await apiService.getEPGStatus();
         if (!cancelled) {
           setEpgStatus(status);
+          setIsStatusLoaded(true);
           if (!status.enabled) {
             console.log('[useChannelEPG] EPG is disabled');
           }
@@ -67,7 +70,8 @@ export const useChannelEPG = (): UseChannelEPGResult => {
       } catch (err) {
         if (!cancelled) {
           console.log('[useChannelEPG] Failed to fetch EPG status:', err);
-          // EPG might not be configured - that's OK
+          // EPG might not be configured - that's OK, mark as loaded anyway
+          setIsStatusLoaded(true);
         }
       }
     };
@@ -183,6 +187,7 @@ export const useChannelEPG = (): UseChannelEPGResult => {
     fetchEPGForChannels,
     getProgram,
     isEnabled,
+    isStatusLoaded,
   };
 };
 

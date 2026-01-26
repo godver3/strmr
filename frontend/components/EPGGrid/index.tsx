@@ -5,6 +5,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import type { View as RNView } from 'react-native';
@@ -28,10 +29,11 @@ import {
 
 // Grid dimensions
 const CHANNEL_COLUMN_WIDTH = Platform.isTV ? tvScale(220, 180) : 120;
-const TIME_SLOT_WIDTH = Platform.isTV ? tvScale(150, 120) : 100;
 const ROW_HEIGHT = Platform.isTV ? tvScale(70, 56) : 50;
 const HEADER_HEIGHT = Platform.isTV ? tvScale(50, 40) : 36;
 const TIME_INDICATOR_WIDTH = 2;
+// Horizontal padding in the parent container (matches live.tsx)
+const CONTAINER_PADDING = Platform.isTV ? tvScale(32, 24) : 24;
 
 interface EPGGridProps {
   channels: LiveChannel[];
@@ -50,6 +52,7 @@ export const EPGGrid = ({
 }: EPGGridProps) => {
   const theme = useTheme();
   const isTV = Platform.isTV;
+  const { width: windowWidth } = useWindowDimensions();
 
   const {
     schedules,
@@ -57,9 +60,6 @@ export const EPGGrid = ({
     gridState,
     isEnabled,
     fetchSchedules,
-    scrollTimeForward,
-    scrollTimeBackward,
-    jumpToNow,
     getTimeSlots,
     getCurrentTimePosition,
   } = useEPGGrid();
@@ -108,9 +108,13 @@ export const EPGGrid = ({
   // Fixed channel width
   const channelWidth = CHANNEL_COLUMN_WIDTH;
 
-  // Calculate grid width
+  // Calculate available width for time slots (screen width minus channel column and padding)
+  const availableWidth = windowWidth - channelWidth - (CONTAINER_PADDING * 2);
+
+  // Calculate grid width - time slot width is dynamic to fill available space
   const totalSlots = (gridState.timeWindowHours * 60) / EPG_GRID_SLOT_MINUTES;
-  const gridContentWidth = totalSlots * TIME_SLOT_WIDTH;
+  const timeSlotWidth = Math.floor(availableWidth / totalSlots);
+  const gridContentWidth = totalSlots * timeSlotWidth;
 
   // Total width
   const totalWidth = channelWidth + gridContentWidth;
@@ -161,17 +165,8 @@ export const EPGGrid = ({
 
   return (
     <View style={styles.container}>
-      {/* Time navigation controls */}
+      {/* Date display */}
       <View style={styles.navBar}>
-        <Pressable style={styles.navButton} onPress={scrollTimeBackward}>
-          <Ionicons name="chevron-back" size={20} color={theme.colors.text.primary} />
-        </Pressable>
-        <Pressable style={styles.navButtonNow} onPress={jumpToNow}>
-          <Text style={styles.navButtonText}>Now</Text>
-        </Pressable>
-        <Pressable style={styles.navButton} onPress={scrollTimeForward}>
-          <Ionicons name="chevron-forward" size={20} color={theme.colors.text.primary} />
-        </Pressable>
         <Text style={styles.navDate}>
           {gridState.timeWindowStart.toLocaleDateString([], {
             weekday: 'short',
@@ -194,7 +189,7 @@ export const EPGGrid = ({
             <View style={[styles.cornerCell, { width: channelWidth }]} />
             <View style={[styles.timeHeader, { width: gridContentWidth }]}>
               {timeSlots.map((slot, index) => (
-                <View key={index} style={[styles.timeSlot, { width: TIME_SLOT_WIDTH }]}>
+                <View key={index} style={[styles.timeSlot, { width: timeSlotWidth }]}>
                   <Text style={styles.timeSlotText}>{formatTimeSlot(slot)}</Text>
                 </View>
               ))}
@@ -215,6 +210,7 @@ export const EPGGrid = ({
                     programs={schedules.get(channel.tvgId || '') || []}
                     channelWidth={channelWidth}
                     gridContentWidth={gridContentWidth}
+                    timeSlotWidth={timeSlotWidth}
                     isFavorite={favoriteChannelIds.has(channel.id)}
                     currentTimePosition={currentTimePosition}
                     onPress={() => handleChannelPress(channel)}
@@ -233,6 +229,7 @@ export const EPGGrid = ({
                   programs={schedules.get(channel.tvgId || '') || []}
                   channelWidth={channelWidth}
                   gridContentWidth={gridContentWidth}
+                  timeSlotWidth={timeSlotWidth}
                   isFavorite={favoriteChannelIds.has(channel.id)}
                   currentTimePosition={currentTimePosition}
                   onPress={() => handleChannelPress(channel)}
@@ -260,6 +257,7 @@ interface EPGRowProps {
   programs: GridProgram[];
   channelWidth: number;
   gridContentWidth: number;
+  timeSlotWidth: number;
   isFavorite: boolean;
   currentTimePosition: number | null;
   onPress: () => void;
@@ -274,6 +272,7 @@ const EPGRow = React.memo(function EPGRow({
   programs,
   channelWidth,
   gridContentWidth,
+  timeSlotWidth,
   isFavorite,
   currentTimePosition,
   onPress,
@@ -326,6 +325,7 @@ const EPGRow = React.memo(function EPGRow({
               key={`${program.channelId}-${program.start}-${index}`}
               program={program}
               theme={theme}
+              timeSlotWidth={timeSlotWidth}
             />
           ))
         ) : (
@@ -362,14 +362,15 @@ const EPGRow = React.memo(function EPGRow({
 interface ProgramCellProps {
   program: GridProgram;
   theme: NovaTheme;
+  timeSlotWidth: number;
 }
 
-const ProgramCell = React.memo(function ProgramCell({ program, theme }: ProgramCellProps) {
+const ProgramCell = React.memo(function ProgramCell({ program, theme, timeSlotWidth }: ProgramCellProps) {
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   // Calculate position based on slot width
-  const leftPosition = Math.round((program.gridStartMinutes / EPG_GRID_SLOT_MINUTES) * TIME_SLOT_WIDTH);
-  const cellWidth = Math.round(program.columnSpan * TIME_SLOT_WIDTH) - 4; // 2px gap on each side
+  const leftPosition = Math.round((program.gridStartMinutes / EPG_GRID_SLOT_MINUTES) * timeSlotWidth);
+  const cellWidth = Math.round(program.columnSpan * timeSlotWidth) - 4; // 2px gap on each side
 
   const progressPercent = program.isCurrent
     ? Math.min(100, Math.max(0,
@@ -421,35 +422,17 @@ const createStyles = (theme: NovaTheme) =>
       textAlign: 'center',
     },
 
-    // Navigation bar
+    // Date bar
     navBar: {
       flexDirection: 'row',
       alignItems: 'center',
       padding: theme.spacing.sm,
-      gap: theme.spacing.sm,
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border.subtle,
     },
-    navButton: {
-      padding: theme.spacing.sm,
-      borderRadius: theme.radius.sm,
-      backgroundColor: theme.colors.overlay.button,
-    },
-    navButtonNow: {
-      paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.sm,
-      borderRadius: theme.radius.sm,
-      backgroundColor: theme.colors.accent.primary,
-    },
-    navButtonText: {
-      ...theme.typography.label.md,
-      color: '#fff',
-      fontWeight: '600',
-    },
     navDate: {
-      ...theme.typography.body.md,
-      color: theme.colors.text.secondary,
-      marginLeft: 'auto',
+      ...theme.typography.title.md,
+      color: theme.colors.text.primary,
     },
 
     // Table

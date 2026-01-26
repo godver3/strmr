@@ -579,7 +579,7 @@ function LiveScreen() {
     favorites,
   );
   const { isHidden, hideChannel } = useLiveHiddenChannels();
-  const { epgData, fetchEPGForChannels, isEnabled: isEPGEnabled } = useChannelEPG();
+  const { epgData, fetchEPGForChannels, isEnabled: isEPGEnabled, isStatusLoaded: isEPGStatusLoaded } = useChannelEPG();
   const {
     hasSavedSession,
     isSelectionMode,
@@ -1733,15 +1733,14 @@ function LiveScreen() {
           onSelect={handleToggleFilter}
           theme={theme}
         />
-        {isEPGEnabled && (
-          <SpatialHeaderButton
-            text={viewMode === 'grid' ? 'List' : 'Guide'}
-            icon={viewMode === 'grid' ? 'list-outline' : 'calendar-outline'}
-            onSelect={handleToggleViewMode}
-            isActive={viewMode === 'grid'}
-            theme={theme}
-          />
-        )}
+        <SpatialHeaderButton
+          text={viewMode === 'grid' ? 'List' : 'Guide'}
+          icon={viewMode === 'grid' ? 'list-outline' : 'calendar-outline'}
+          onSelect={handleToggleViewMode}
+          isActive={false}
+          theme={theme}
+          disabled={!isEPGStatusLoaded || !isEPGEnabled}
+        />
         {hasSavedSession && !isSelectionMode && (
           <SpatialHeaderButton
             text="Resume"
@@ -2521,6 +2520,7 @@ const createStyles = (theme: NovaTheme, screenWidth: number = 1920, screenHeight
       flexDirection: 'row',
       alignItems: 'center',
       gap: theme.spacing.sm,
+      marginBottom: theme.spacing.xl,
     },
     headerActionButton: {
       paddingHorizontal: isTV ? theme.spacing['2xl'] : theme.spacing.md,
