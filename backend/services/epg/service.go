@@ -113,7 +113,8 @@ func (s *Service) Refresh(ctx context.Context) error {
 	s.mu.Lock()
 	if s.refreshing {
 		s.mu.Unlock()
-		return errors.New("EPG refresh already in progress")
+		log.Println("[epg] refresh already in progress, skipping duplicate request")
+		return nil // Not an error - refresh is happening, which is what we want
 	}
 	s.refreshing = true
 	s.lastError = ""
@@ -352,14 +353,16 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 					log.Printf("[epg] error parsing channel: %v", err)
 					continue
 				}
+				// Normalize channel ID to lowercase to merge duplicates
+				normalizedID := strings.ToLower(ch.ID)
 				epgChannel := models.EPGChannel{
-					ID:   ch.ID,
+					ID:   normalizedID,
 					Name: getFirstLangValue(ch.DisplayName),
 				}
 				if len(ch.Icon) > 0 {
 					epgChannel.Icon = ch.Icon[0].Src
 				}
-				schedule.Channels[ch.ID] = epgChannel
+				schedule.Channels[normalizedID] = epgChannel
 
 			case "programme":
 				var prog xmltvProgramme
@@ -377,8 +380,10 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 					continue
 				}
 
+				// Normalize channel ID to lowercase to merge duplicates
+				normalizedChannelID := strings.ToLower(prog.Channel)
 				epgProgram := models.EPGProgram{
-					ChannelID:   prog.Channel,
+					ChannelID:   normalizedChannelID,
 					Title:       getFirstLangValue(prog.Title),
 					Description: getFirstLangValue(prog.Desc),
 					Start:       start,
@@ -413,7 +418,7 @@ func (s *Service) parseXMLTV(reader io.Reader, schedule *models.EPGSchedule) err
 					epgProgram.Rating = prog.Rating[0].Value.Value
 				}
 
-				schedule.Programs[prog.Channel] = append(schedule.Programs[prog.Channel], epgProgram)
+				schedule.Programs[normalizedChannelID] = append(schedule.Programs[normalizedChannelID], epgProgram)
 			}
 		}
 	}
@@ -516,10 +521,13 @@ func (s *Service) GetNowPlaying(channelIDs []string) []models.EPGNowPlaying {
 	for _, channelID := range channelIDs {
 		np := models.EPGNowPlaying{ChannelID: channelID}
 
-		// Try to find programs with exact channel ID
-		programs := s.schedule.Programs[channelID]
+		// Normalize channel ID to lowercase for lookup (EPG data is stored lowercase)
+		lookupID := strings.ToLower(channelID)
 
-		// If no match, try to find by normalized ID
+		// Try to find programs with normalized channel ID
+		programs := s.schedule.Programs[lookupID]
+
+		// If no match, try to find by other matching strategies
 		if len(programs) == 0 {
 			programs = s.findProgramsByChannelMatch(channelID)
 		}
@@ -552,10 +560,13 @@ func (s *Service) GetSchedule(channelID string, start, end time.Time) []models.E
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Try to find programs with exact channel ID
-	programs := s.schedule.Programs[channelID]
+	// Normalize channel ID to lowercase for lookup (EPG data is stored lowercase)
+	lookupID := strings.ToLower(channelID)
 
-	// If no match, try to find by normalized ID
+	// Try to find programs with normalized channel ID
+	programs := s.schedule.Programs[lookupID]
+
+	// If no match, try to find by other matching strategies
 	if len(programs) == 0 {
 		programs = s.findProgramsByChannelMatch(channelID)
 	}
@@ -580,10 +591,13 @@ func (s *Service) GetScheduleMultiple(channelIDs []string, start, end time.Time)
 	result := make(map[string][]models.EPGProgram, len(channelIDs))
 
 	for _, channelID := range channelIDs {
-		// Try to find programs with exact channel ID
-		programs := s.schedule.Programs[channelID]
+		// Normalize channel ID to lowercase for lookup (EPG data is stored lowercase)
+		lookupID := strings.ToLower(channelID)
 
-		// If no match, try to find by normalized ID
+		// Try to find programs with normalized channel ID
+		programs := s.schedule.Programs[lookupID]
+
+		// If no match, try to find by other matching strategies
 		if len(programs) == 0 {
 			programs = s.findProgramsByChannelMatch(channelID)
 		}
@@ -617,7 +631,7 @@ func (s *Service) findProgramsByChannelMatch(channelID string) []models.EPGProgr
 	// Normalize the input channel ID
 	normalizedInput := normalizeChannelID(channelID)
 
-	// Try to find a matching channel
+	// Try to find a matching channel by normalized ID
 	for epgChannelID, programs := range s.schedule.Programs {
 		if normalizeChannelID(epgChannelID) == normalizedInput {
 			return programs
@@ -627,7 +641,19 @@ func (s *Service) findProgramsByChannelMatch(channelID string) []models.EPGProgr
 	// Try matching by channel name
 	for epgChannelID, ch := range s.schedule.Channels {
 		if normalizeChannelID(ch.Name) == normalizedInput {
-			return s.schedule.Programs[epgChannelID]
+			if programs := s.schedule.Programs[epgChannelID]; len(programs) > 0 {
+				return programs
+			}
+		}
+	}
+
+	// Try partial matching - check if input contains or is contained by EPG channel ID
+	for epgChannelID, programs := range s.schedule.Programs {
+		epgNorm := normalizeChannelID(epgChannelID)
+		if strings.Contains(epgNorm, normalizedInput) || strings.Contains(normalizedInput, epgNorm) {
+			if len(programs) > 0 {
+				return programs
+			}
 		}
 	}
 
@@ -638,12 +664,16 @@ func (s *Service) findProgramsByChannelMatch(channelID string) []models.EPGProgr
 func normalizeChannelID(s string) string {
 	// Convert to lowercase
 	s = strings.ToLower(s)
-	// Remove common suffixes
-	s = strings.TrimSuffix(s, " hd")
-	s = strings.TrimSuffix(s, " sd")
-	s = strings.TrimSuffix(s, " fhd")
-	s = strings.TrimSuffix(s, " uhd")
-	s = strings.TrimSuffix(s, " 4k")
+	// Remove common suffixes (with or without space)
+	suffixes := []string{" hd", " sd", " fhd", " uhd", " 4k", "hd", "sd", "fhd", "uhd", "4k"}
+	for _, suffix := range suffixes {
+		s = strings.TrimSuffix(s, suffix)
+	}
+	// Remove country prefixes like "us |", "uk |", "ca -" etc
+	prefixPattern := regexp.MustCompile(`^[a-z]{2}\s*[\|\-]\s*`)
+	s = prefixPattern.ReplaceAllString(s, "")
+	// Remove trailing country codes like .us, .uk, .ca
+	s = regexp.MustCompile(`\.[a-z]{2}$`).ReplaceAllString(s, "")
 	// Remove special characters and spaces
 	reg := regexp.MustCompile(`[^a-z0-9]`)
 	return reg.ReplaceAllString(s, "")
@@ -654,16 +684,11 @@ func (s *Service) GetEPGChannelID(tvgID, channelName string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Direct match by tvg-id
+	// EPG data is stored with lowercase channel IDs, so normalize for lookup
 	if tvgID != "" {
-		if _, exists := s.schedule.Channels[tvgID]; exists {
-			return tvgID
-		}
-		// Case-insensitive match
-		for id := range s.schedule.Channels {
-			if strings.EqualFold(id, tvgID) {
-				return id
-			}
+		lookupID := strings.ToLower(tvgID)
+		if _, exists := s.schedule.Channels[lookupID]; exists {
+			return lookupID
 		}
 	}
 
